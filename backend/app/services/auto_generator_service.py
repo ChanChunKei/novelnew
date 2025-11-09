@@ -104,13 +104,8 @@ class AutoGeneratorService:
                     logger.warning(f"Project {project_id} has {len(existing_tasks)} running tasks, this should not happen")
                 raise ValueError(f"Project {project_id} already has {len(existing_tasks)} running task(s)")
 
-            # ✅ 验证：检查项目标题，拒绝未命名的灵感项目
-            if not project.title or project.title.strip() == '' or \
-               project.title.strip().lower() in ['未命名', '新项目', 'untitled', 'new project', '未命名灵感']:
-                raise ValueError(
-                    f"项目'{project.title}'还未完成命名，无法创建自动生成任务。"
-                    "请先完成灵感阶段，给项目起一个正式名称后再创建任务。"
-                )
+            # ✅ 移除验证：允许未命名的灵感项目使用自动生成器
+            # 用户可能在灵感阶段就想开始生成章节内容
 
             # ✅ 如果 target_chapters 为 None，尝试从章节大纲推断
             if target_chapters is None:
@@ -180,17 +175,8 @@ class AutoGeneratorService:
             await cls._log(db, task_id, "error", "任务启动失败：项目不存在，已自动停止任务")
             raise ValueError(f"项目 {task.project_id} 不存在")
 
-        # 检查项目名称是否为默认值
-        if not project.title or project.title.strip() == '' or \
-           project.title.strip().lower() in ['未命名', '新项目', 'untitled', 'new project', '未命名灵感']:
-            task.status = "stopped"
-            task.updated_at = datetime.now(timezone.utc)
-            await db.commit()
-            await cls._log(db, task_id, "error", f"任务启动失败：项目名称为'{project.title}'，是未完成的灵感项目，已自动停止任务")
-            raise ValueError(
-                f"项目'{project.title}'还未完成命名，无法启动自动生成任务。"
-                "请先完成灵感阶段，给项目起一个正式名称后再创建任务。"
-            )
+        # ✅ 移除验证：允许未命名的灵感项目启动自动生成任务
+        # 用户可以在灵感阶段就开始生成内容
 
         # 更新状态
         await db.execute(
@@ -640,41 +626,34 @@ class AutoGeneratorService:
             prompt_service = PromptService(db)
             llm_service = LLMService(db)
 
-            # 获取项目（预加载所有关系以避免 greenlet_spawn 错误）
+            # ✅ 性能优化：只加载必要的数据，不预加载所有章节
+            # 对于大型项目（200+章节），预加载所有章节会导致性能问题
             from sqlalchemy.orm import selectinload, joinedload
 
             result = await db.execute(
                 select(Project)
                 .where(Project.id == task.project_id)
                 .options(
-                    selectinload(Project.chapters).selectinload(Chapter.versions),
-                    selectinload(Project.chapters).selectinload(Chapter.selected_version),
-                    selectinload(Project.chapters).selectinload(Chapter.evaluations),
-                    selectinload(Project.outlines),
-                    selectinload(Project.conversations),
-                    joinedload(Project.blueprint),  # 使用 joinedload 确保 blueprint 被加载
-                    selectinload(Project.characters),
-                    selectinload(Project.relationships_),
-                    selectinload(Project.volumes)  # ✅ 修复：预加载 volumes 以避免 greenlet_spawn 错误
+                    selectinload(Project.outlines),  # 章节大纲（轻量级）
+                    selectinload(Project.conversations),  # 对话历史
+                    joinedload(Project.blueprint),  # 蓝图信息
+                    selectinload(Project.characters),  # 角色列表
+                    selectinload(Project.relationships_),  # 人物关系
+                    selectinload(Project.volumes)  # 分卷信息
+                    # ❌ 不再预加载所有章节和版本，改为按需查询
                 )
             )
             project = result.scalar_one_or_none()
             if not project:
                 raise ValueError(f"Project {task.project_id} not found")
 
-            # 确保所有关系都已加载到内存中，避免后续懒加载
-            # 这会触发所有关系的加载，确保它们在异步上下文中可用
-            _ = project.chapters
+            # 确保基础关系已加载
             _ = project.outlines
             _ = project.conversations
             _ = project.blueprint
             _ = project.characters
             _ = project.relationships_
-            _ = project.volumes  # ✅ 修复：确保 volumes 被加载
-            for ch in project.chapters:
-                _ = ch.versions
-                _ = ch.selected_version
-                _ = ch.evaluations
+            _ = project.volumes
 
             # 准备章节
             chapter = await novel_service.get_or_create_chapter(task.project_id, next_chapter_number)
@@ -683,16 +662,42 @@ class AutoGeneratorService:
             chapter.status = "generating"
             await db.commit()
 
-            # 收集前情摘要
+            # ✅ 性能优化：只查询最近N章的完整内容（而不是所有章节）
+            # 对于生成新章节，只需要最近几章的上下文
+            MAX_CONTEXT_CHAPTERS = 10  # 最多保留最近10章的完整内容
+
             outlines_map = {item.chapter_number: item for item in project.outlines}
             completed_chapters = []
 
-            for existing in project.chapters:
-                if existing.chapter_number >= next_chapter_number:
-                    continue
+            # 只查询小于当前章节号的已完成章节，按章节号降序排列，限制查询数量
+            result = await db.execute(
+                select(Chapter)
+                .where(
+                    Chapter.project_id == task.project_id,
+                    Chapter.chapter_number < next_chapter_number,
+                    Chapter.status == "successful"  # 只查询成功生成的章节
+                )
+                .options(
+                    selectinload(Chapter.selected_version)  # 只加载selected_version
+                )
+                .order_by(Chapter.chapter_number.desc())
+                .limit(MAX_CONTEXT_CHAPTERS)  # 限制查询数量
+            )
+            recent_chapters = list(reversed(result.scalars().all()))  # 反转为正序
+
+            # 批量生成缺失的摘要（减少数据库提交次数）
+            chapters_need_summary = []
+            for existing in recent_chapters:
                 if existing.selected_version is None or not existing.selected_version.content:
                     continue
+
                 if not existing.real_summary:
+                    chapters_need_summary.append(existing)
+
+            # 批量生成摘要
+            if chapters_need_summary:
+                logger.info(f"需要为 {len(chapters_need_summary)} 章生成摘要")
+                for existing in chapters_need_summary:
                     summary = await llm_service.get_summary(
                         existing.selected_version.content,
                         temperature=0.15,
@@ -700,8 +705,15 @@ class AutoGeneratorService:
                         timeout=180.0,
                     )
                     existing.real_summary = remove_think_tags(summary)
-                    await db.commit()
-                # ✅ 修复:使用不同的变量名避免覆盖当前章节的 outline
+                # 批量提交所有摘要更新
+                await db.commit()
+                logger.info(f"已批量生成 {len(chapters_need_summary)} 个章节摘要")
+
+            # 构建completed_chapters列表
+            for existing in recent_chapters:
+                if existing.selected_version is None or not existing.selected_version.content:
+                    continue
+
                 existing_outline = outlines_map.get(existing.chapter_number)
                 completed_chapters.append({
                     "chapter_number": existing.chapter_number,
