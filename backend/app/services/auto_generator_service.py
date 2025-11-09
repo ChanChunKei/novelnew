@@ -860,6 +860,7 @@ class AutoGeneratorService:
             # 如果启用自动选择，先评估再选择最佳版本
             if task.auto_select_version:
                 # 重新查询 chapter 并预加载 versions 和 selected_version 关系
+                # 使用 populate_existing=True 强制重新加载，避免读取缓存的旧数据
                 result = await db.execute(
                     select(Chapter)
                     .where(
@@ -870,6 +871,7 @@ class AutoGeneratorService:
                         selectinload(Chapter.versions),
                         selectinload(Chapter.selected_version)
                     )
+                    .execution_options(populate_existing=True)
                 )
                 chapter_obj = result.scalar_one_or_none()
 
