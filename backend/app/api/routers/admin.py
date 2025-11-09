@@ -2,7 +2,7 @@ import logging
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.dependencies import get_current_admin
@@ -165,29 +165,34 @@ async def delete_unfinished_inspirations(
     session: AsyncSession = Depends(get_session),
     current_admin=Depends(get_current_admin),
 ) -> dict:
-    """删除所有未完成的灵感项目（未命名或使用默认名称的项目）"""
+    """删除所有未完成的灵感项目（未命名或使用默认名称的项目）
 
-    # 定义未完成灵感项目的标识
-    unfinished_patterns = ['未命名', '新项目', 'untitled', 'new project', '未命名灵感', '']
+    ✅ 性能优化：在数据库层面筛选，避免加载所有项目到内存
+    """
 
-    # 查询所有项目
-    result = await session.execute(select(NovelProject))
-    all_projects = result.scalars().all()
+    # ✅ 在数据库层面构建筛选条件
+    conditions = [
+        NovelProject.title.is_(None),  # 标题为NULL
+        func.trim(NovelProject.title) == '',  # 标题为空字符串（去除空格后）
+    ]
 
-    # 筛选出未完成的灵感项目
-    unfinished_projects = []
-    for project in all_projects:
-        title = (project.title or '').strip().lower()
-        if not title or title in unfinished_patterns:
-            unfinished_projects.append(project)
+    # 添加各种默认名称的条件（不区分大小写）
+    default_names = ['未命名', '新项目', 'untitled', 'new project', '未命名灵感']
+    for pattern in default_names:
+        conditions.append(func.lower(func.trim(NovelProject.title)) == pattern)
 
-    # 删除这些项目
-    deleted_count = 0
-    deleted_ids = []
+    # ✅ 在数据库层面筛选，只查询符合条件的项目
+    result = await session.execute(
+        select(NovelProject).where(or_(*conditions))
+    )
+    unfinished_projects = result.scalars().all()
+
+    # 收集ID并删除
+    deleted_ids = [project.id for project in unfinished_projects]
+    deleted_count = len(deleted_ids)
+
     for project in unfinished_projects:
-        deleted_ids.append(project.id)
         await session.delete(project)
-        deleted_count += 1
 
     await session.commit()
 
