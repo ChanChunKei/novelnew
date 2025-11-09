@@ -568,13 +568,13 @@ const editChapterContent = async (data: { chapterNumber: number, content: string
   }
 }
 
-const handleGenerateOutline = async (numChapters: number) => {
+const handleGenerateOutline = async (numChapters: number, versionCount: number = 3) => {
   if (!project.value) return
   isGeneratingOutline.value = true
   try {
     const startChapter = (project.value.blueprint?.chapter_outline?.length || 0) + 1
-    await novelStore.generateChapterOutline(startChapter, numChapters)
-    globalAlert.showSuccess('新的章节大纲已生成', '操作成功')
+    await novelStore.generateChapterOutline(startChapter, numChapters, versionCount)
+    globalAlert.showSuccess(`新的章节大纲已生成（AI从${versionCount}个版本中选择最佳）`, '操作成功')
   } catch (error) {
     logger.error('生成大纲失败:', error)
     globalAlert.showError(`生成大纲失败: ${error instanceof Error ? error.message : '未知错误'}`, '生成失败')

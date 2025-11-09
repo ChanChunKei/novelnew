@@ -175,6 +175,7 @@ class DeleteChapterRequest(BaseModel):
 class GenerateOutlineRequest(BaseModel):
     start_chapter: int
     num_chapters: int = 10  # 默认值，AI 可以根据故事节奏自主调整
+    version_count: int = 3  # 生成版本数量，默认3个版本供AI评估选择
 
 
 class BlueprintPatch(BaseModel):

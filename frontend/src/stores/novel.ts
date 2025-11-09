@@ -253,7 +253,7 @@ export const useNovelStore = defineStore('novel', () => {
     }
   }
 
-  async function generateChapterOutline(startChapter: number, numChapters: number) {
+  async function generateChapterOutline(startChapter: number, numChapters: number, versionCount: number = 3) {
     error.value = null
     try {
       if (!currentProject.value) {
@@ -262,7 +262,8 @@ export const useNovelStore = defineStore('novel', () => {
       const updatedProject = await NovelAPI.generateChapterOutline(
         currentProject.value.id,
         startChapter,
-        numChapters
+        numChapters,
+        versionCount
       )
       currentProject.value = updatedProject // 更新 store
     } catch (err) {

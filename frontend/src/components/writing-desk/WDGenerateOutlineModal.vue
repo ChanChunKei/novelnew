@@ -23,14 +23,30 @@
                     </div>
                   </div>
                 </div>
-                <div class="mt-6">
-                  <label for="numChapters" class="block text-base font-medium text-gray-700">生成数量</label>
-                  <input type="number" name="numChapters" id="numChapters" v-model.number="numChapters" class="mt-2 block w-full rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-lg shadow-sm focus:border-indigo-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500" min="1" max="20">
-                  <div class="mt-5 flex flex-wrap justify-center gap-3">
-                    <button v-for="count in [1, 2, 5, 10]" :key="count" @click="setNumChapters(count)"
-                      :class="['px-5 py-2 text-base rounded-full transition-colors duration-150', numChapters === count ? 'bg-indigo-600 text-white shadow-md' : 'bg-gray-200 text-gray-700 hover:bg-gray-300']">
-                      {{ count }} 章
-                    </button>
+                <div class="mt-6 space-y-6">
+                  <!-- 章节数量 -->
+                  <div>
+                    <label for="numChapters" class="block text-base font-medium text-gray-700">生成数量</label>
+                    <input type="number" name="numChapters" id="numChapters" v-model.number="numChapters" class="mt-2 block w-full rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-lg shadow-sm focus:border-indigo-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500" min="1" max="20">
+                    <div class="mt-5 flex flex-wrap justify-center gap-3">
+                      <button v-for="count in [1, 2, 5, 10]" :key="count" @click="setNumChapters(count)"
+                        :class="['px-5 py-2 text-base rounded-full transition-colors duration-150', numChapters === count ? 'bg-indigo-600 text-white shadow-md' : 'bg-gray-200 text-gray-700 hover:bg-gray-300']">
+                        {{ count }} 章
+                      </button>
+                    </div>
+                  </div>
+
+                  <!-- 版本数量 -->
+                  <div>
+                    <label for="versionCount" class="block text-base font-medium text-gray-700">生成版本数</label>
+                    <p class="mt-1 text-sm text-gray-500">生成多个版本，AI自动选择最佳方案</p>
+                    <input type="number" name="versionCount" id="versionCount" v-model.number="versionCount" class="mt-2 block w-full rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-lg shadow-sm focus:border-indigo-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500" min="1" max="5">
+                    <div class="mt-5 flex flex-wrap justify-center gap-3">
+                      <button v-for="count in [1, 2, 3, 5]" :key="`v${count}`" @click="setVersionCount(count)"
+                        :class="['px-5 py-2 text-base rounded-full transition-colors duration-150', versionCount === count ? 'bg-green-600 text-white shadow-md' : 'bg-gray-200 text-gray-700 hover:bg-gray-300']">
+                        {{ count }} 版本
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -58,14 +74,19 @@ const props = defineProps<Props>()
 const emit = defineEmits(['close', 'generate'])
 
 const numChapters = ref(5)
+const versionCount = ref(3)
 
 const setNumChapters = (count: number) => {
   numChapters.value = count
 }
 
+const setVersionCount = (count: number) => {
+  versionCount.value = count
+}
+
 const handleGenerate = () => {
   if (numChapters.value > 0) {
-    emit('generate', numChapters.value)
+    emit('generate', numChapters.value, versionCount.value)
     emit('close')
   }
 }
