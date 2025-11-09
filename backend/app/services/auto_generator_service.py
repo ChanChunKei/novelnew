@@ -20,6 +20,8 @@ from ..models.auto_generator import AutoGeneratorLog, AutoGeneratorTask
 from ..models.novel import Chapter, ChapterOutline, NovelProject as Project, Volume
 from ..schemas.novel import GenerateChapterRequest, BugFixMode
 from .novel_service import NovelService
+from .llm_service import LLMService
+from .prompt_service import PromptService
 from ..utils.metrics import (
     track_duration, chapter_generation_duration,
     chapter_generation_total
