@@ -432,7 +432,10 @@ async def evaluate_outline_versions(
     blueprint_dict: dict,
     llm_service: LLMService,
     prompt_service: PromptService,
-    user_id: int
+    user_id: int,
+    completed_chapters: list = None,
+    previous_two_chapters: list = None,
+    start_chapter: int = None
 ) -> int:
     """
     AI评估多个大纲版本，返回最佳版本的索引
@@ -443,12 +446,15 @@ async def evaluate_outline_versions(
         llm_service: LLM服务
         prompt_service: PromptService
         user_id: 用户ID
+        completed_chapters: 已完成章节摘要列表
+        previous_two_chapters: 前两章完整内容
+        start_chapter: 新大纲起始章节号
 
     Returns:
         最佳版本的索引（0-based）
     """
     try:
-        # 1. 获取评估提示词（复用章节评估提示词或创建新的）
+        # 1. 获取评估提示词
         evaluator_prompt = await prompt_service.get_by_name("outline_evaluation")
 
         if not evaluator_prompt:
@@ -473,6 +479,12 @@ async def evaluate_outline_versions(
 
         evaluator_payload = {
             "novel_blueprint": blueprint_dict,
+            "completed_chapters": completed_chapters or [],
+            "previous_chapters_content": previous_two_chapters or [],
+            "generation_context": {
+                "start_chapter": start_chapter,
+                "total_previous_chapters": len(completed_chapters) if completed_chapters else 0
+            },
             "content_to_evaluate": {
                 "type": "outline",
                 "versions": versions_to_evaluate
@@ -652,7 +664,10 @@ async def generate_chapter_outline(
             blueprint_dict=blueprint_dict,
             llm_service=llm_service,
             prompt_service=prompt_service,
-            user_id=current_user.id
+            user_id=current_user.id,
+            completed_chapters=completed_chapters,
+            previous_two_chapters=previous_two_chapters,
+            start_chapter=request.start_chapter
         )
         data = outline_versions[best_version_idx]["data"]
         logger.info(f"项目 {project_id} AI选择了版本 {best_version_idx + 1} 作为最佳大纲")
