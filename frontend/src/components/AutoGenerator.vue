@@ -66,7 +66,7 @@
           <input v-model="form.autoSelectVersion" type="checkbox" />
           自动选择版本
         </label>
-        <span class="hint">自动选择第一个生成的版本，否则需要手动选择</span>
+        <span class="hint">生成多个版本时通过AI评估自动选择最佳版本，单版本时直接选择；否则需要手动选择</span>
       </div>
 
       <div class="form-group">
@@ -320,7 +320,7 @@ const form = ref({
   targetChapters: null as number | null,
   intervalSeconds: 60,
   autoSelectVersion: true,
-  versionCount: 1,
+  versionCount: 3,  // 默认生成3个版本，与后端保持一致
   generationMode: 'basic',  // 默认使用基础模式
   enableTensionAnalysis: true,
   enableCharacterConsistency: true,
