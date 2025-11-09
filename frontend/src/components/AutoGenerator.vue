@@ -81,6 +81,18 @@
         <span class="hint">默认生成1个版本，可设置1-5个版本供选择</span>
       </div>
 
+      <div class="form-group">
+        <label>大纲生成版本数</label>
+        <input
+          v-model.number="form.outlineVersionCount"
+          type="number"
+          min="1"
+          max="5"
+          placeholder="3"
+        />
+        <span class="hint">自动生成大纲时生成多个版本，AI自动选择最佳方案（默认3个）</span>
+      </div>
+
       <!-- 生成模式选择 -->
       <div class="form-group mode-selector">
         <label>🎯 生成模式</label>
@@ -321,6 +333,7 @@ const form = ref({
   intervalSeconds: 60,
   autoSelectVersion: true,
   versionCount: 3,  // 默认生成3个版本，与后端保持一致
+  outlineVersionCount: 3,  // 默认生成3个大纲版本
   generationMode: 'basic',  // 默认使用基础模式
   enableTensionAnalysis: true,
   enableCharacterConsistency: true,
@@ -342,6 +355,7 @@ const createTask = async () => {
       generation_config: {
         generation_mode: form.value.generationMode,  // 传递生成模式
         version_count: form.value.versionCount,
+        outline_version_count: form.value.outlineVersionCount,  // 大纲版本数
         enable_tension_analysis: form.value.enableTensionAnalysis,
         enable_character_consistency: form.value.enableCharacterConsistency,
         enable_foreshadowing: form.value.enableForeshadowing
