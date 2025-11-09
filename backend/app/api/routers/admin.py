@@ -160,6 +160,51 @@ async def list_novel_projects(
     return projects
 
 
+@router.delete("/novel-projects/unfinished-inspirations", status_code=status.HTTP_200_OK)
+async def delete_unfinished_inspirations(
+    session: AsyncSession = Depends(get_session),
+    current_admin=Depends(get_current_admin),
+) -> dict:
+    """删除所有未完成的灵感项目（未命名或使用默认名称的项目）"""
+
+    # 定义未完成灵感项目的标识
+    unfinished_patterns = ['未命名', '新项目', 'untitled', 'new project', '未命名灵感', '']
+
+    # 查询所有项目
+    result = await session.execute(select(NovelProject))
+    all_projects = result.scalars().all()
+
+    # 筛选出未完成的灵感项目
+    unfinished_projects = []
+    for project in all_projects:
+        title = (project.title or '').strip().lower()
+        if not title or title in unfinished_patterns:
+            unfinished_projects.append(project)
+
+    # 删除这些项目
+    deleted_count = 0
+    deleted_ids = []
+    for project in unfinished_projects:
+        deleted_ids.append(project.id)
+        await session.delete(project)
+        deleted_count += 1
+
+    await session.commit()
+
+    logger.info(
+        "管理员 %s 删除了 %s 个未完成灵感项目: %s",
+        current_admin.username,
+        deleted_count,
+        deleted_ids[:10]  # 只记录前10个ID
+    )
+
+    return {
+        "deleted_count": deleted_count,
+        "deleted_ids": deleted_ids,
+        "message": f"成功删除 {deleted_count} 个未完成的灵感项目"
+    }
+
+
 @router.get("/novel-projects/{project_id}", response_model=NovelProjectSchema)
 async def get_novel_project(
     project_id: str,
