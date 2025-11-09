@@ -1,72 +1,78 @@
 <template>
-  <n-layout has-sider class="admin-layout">
-    <n-layout-sider
-      collapse-mode="width"
-      :collapsed="collapsed"
-      :collapsed-width="64"
-      :width="240"
-      bordered
-      show-trigger
-      @collapse="collapsed = true"
-      @expand="collapsed = false"
-    >
-      <div class="sider-header">
-        <span class="logo" v-if="!collapsed">Arboris 管理台</span>
-        <span class="logo-small" v-else>管理</span>
-      </div>
-      <n-menu
-        :value="activeKey"
-        :options="menuOptions"
-        :collapsed="collapsed"
-        :collapsed-width="64"
-        :accordion="true"
-        @update:value="handleMenuSelect"
-      />
-    </n-layout-sider>
+  <n-message-provider>
+    <n-dialog-provider>
+      <n-layout has-sider class="admin-layout">
+        <n-layout-sider
+          collapse-mode="width"
+          :collapsed="collapsed"
+          :collapsed-width="64"
+          :width="240"
+          bordered
+          show-trigger
+          @collapse="collapsed = true"
+          @expand="collapsed = false"
+        >
+          <div class="sider-header">
+            <span class="logo" v-if="!collapsed">Arboris 管理台</span>
+            <span class="logo-small" v-else>管理</span>
+          </div>
+          <n-menu
+            :value="activeKey"
+            :options="menuOptions"
+            :collapsed="collapsed"
+            :collapsed-width="64"
+            :accordion="true"
+            @update:value="handleMenuSelect"
+          />
+        </n-layout-sider>
 
-    <n-layout>
-      <n-layout-header bordered class="admin-header">
-        <n-space align="center" justify="space-between" class="header-content">
-          <n-space align="center" :size="12">
-            <n-button
-              class="mobile-trigger"
-              quaternary
-              circle
-              size="small"
-              @click="collapsed = !collapsed"
-            >
-              <template #icon>
-                <span class="icon">☰</span>
-              </template>
-            </n-button>
-            <span class="header-title">{{ currentMenuLabel }}</span>
-          </n-space>
-          <n-space align="center" :size="10">
-            <span class="header-subtitle">高效掌控平台运行状态</span>
-            <n-button size="small" type="primary" ghost @click="goBack">
-              返回业务系统
-            </n-button>
-          </n-space>
-        </n-space>
-      </n-layout-header>
-      <n-layout-content class="admin-content">
-        <n-scrollbar class="content-scroll">
-          <component :is="activeComponent" />
-        </n-scrollbar>
-      </n-layout-content>
-    </n-layout>
-  </n-layout>
+        <n-layout>
+          <n-layout-header bordered class="admin-header">
+            <n-space align="center" justify="space-between" class="header-content">
+              <n-space align="center" :size="12">
+                <n-button
+                  class="mobile-trigger"
+                  quaternary
+                  circle
+                  size="small"
+                  @click="collapsed = !collapsed"
+                >
+                  <template #icon>
+                    <span class="icon">☰</span>
+                  </template>
+                </n-button>
+                <span class="header-title">{{ currentMenuLabel }}</span>
+              </n-space>
+              <n-space align="center" :size="10">
+                <span class="header-subtitle">高效掌控平台运行状态</span>
+                <n-button size="small" type="primary" ghost @click="goBack">
+                  返回业务系统
+                </n-button>
+              </n-space>
+            </n-space>
+          </n-layout-header>
+          <n-layout-content class="admin-content">
+            <n-scrollbar class="content-scroll">
+              <component :is="activeComponent" />
+            </n-scrollbar>
+          </n-layout-content>
+        </n-layout>
+      </n-layout>
+    </n-dialog-provider>
+  </n-message-provider>
 </template>
 
 <script setup lang="ts">
 import { computed, defineAsyncComponent, h, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
   NButton,
+  NDialogProvider,
   NLayout,
   NLayoutContent,
   NLayoutHeader,
   NLayoutSider,
   NMenu,
+  NMessageProvider,
   NScrollbar,
   NSpace,
   type MenuOption

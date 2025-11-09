@@ -593,25 +593,43 @@ async def _tool_search_chapters(
     # 方式2：数据库全文搜索（fallback）
     try:
         from sqlalchemy import select, and_
-        from ..models.novel import Chapter
+        from sqlalchemy.orm import selectinload
+        from ..models.novel import Chapter, ChapterVersion
 
+        # ✅ 修复：Chapter没有content字段，需要查询ChapterVersion
         stmt = select(Chapter).where(
             and_(
                 Chapter.project_id == project_id,
-                Chapter.content.contains(keyword)
+                Chapter.status == "successful"
             )
-        ).order_by(Chapter.chapter_number.desc()).limit(limit)
+        ).options(
+            selectinload(Chapter.selected_version)
+        ).order_by(Chapter.chapter_number.desc()).limit(limit * 3)  # 多取一些，因为要在Python中过滤
 
         result = await db_session.execute(stmt)
         chapters = result.scalars().all()
 
-        if chapters:
-            formatted_results = []
-            for ch in chapters:
+        # 在ChapterVersion.content中搜索关键词
+        formatted_results = []
+        found_count = 0
+        for ch in chapters:
+            if found_count >= limit:
+                break
+            if ch.selected_version and keyword in ch.selected_version.content:
+                # 找到包含关键词的位置，提取前后文
+                content = ch.selected_version.content
+                keyword_pos = content.find(keyword)
+                start_pos = max(0, keyword_pos - 200)
+                end_pos = min(len(content), keyword_pos + 300)
+                snippet = content[start_pos:end_pos]
+
                 formatted_results.append(
-                    f"【第{ch.chapter_number}章】{ch.title or ''}\n"
-                    f"内容片段:\n{(ch.content or '')[:500]}...\n"
+                    f"【第{ch.chapter_number}章】\n"
+                    f"相关内容:\n...{snippet}...\n"
                 )
+                found_count += 1
+
+        if formatted_results:
             return "\n\n".join(formatted_results)
         else:
             return f"未找到包含关键词'{keyword}'的章节"
@@ -629,9 +647,101 @@ async def _tool_get_character_state(
     name = arguments.get("name")
     chapter_number = arguments.get("chapter_number")
 
-    # TODO: 实现角色状态查询
-    # 这需要从character_states表查询，或者从章节内容中提取
-    return f"角色【{name}】的状态信息：[暂未实现，需要查询character_states表或分析历史章节]"
+    if not project_id:
+        return "错误：缺少project_id"
+
+    if not name:
+        return "错误：缺少角色名称"
+
+    try:
+        from sqlalchemy import select, and_, or_, func
+        from ..models.novel import BlueprintCharacter, Volume, Chapter
+
+        # ✅ 实现：从蓝图角色表查询基础信息
+        # 1. 先查询蓝图中的角色定义
+        stmt = select(BlueprintCharacter).where(
+            and_(
+                BlueprintCharacter.project_id == project_id,
+                BlueprintCharacter.name == name
+            )
+        )
+
+        result = await db_session.execute(stmt)
+        character = result.scalar_one_or_none()
+
+        if not character:
+            # 尝试模糊匹配
+            stmt = select(BlueprintCharacter).where(
+                and_(
+                    BlueprintCharacter.project_id == project_id,
+                    BlueprintCharacter.name.contains(name)
+                )
+            )
+            result = await db_session.execute(stmt)
+            character = result.scalar_one_or_none()
+
+        if not character:
+            return f"未找到角色【{name}】的信息。请检查角色名称是否正确。"
+
+        # 2. 构建角色信息
+        character_info = [
+            f"=== 角色【{character.name}】信息 ===",
+            "",
+            f"身份：{character.identity or '未设定'}",
+            f"性格：{character.personality or '未设定'}",
+            f"目标：{character.goals or '未设定'}",
+            f"能力：{character.abilities or '未设定'}",
+            f"与主角关系：{character.relationship_to_protagonist or '未设定'}",
+        ]
+
+        # 3. 如果指定了章节号，尝试查找该章节时角色的最新状态
+        if chapter_number:
+            # 从最近几章中搜索该角色的相关描写
+            from sqlalchemy.orm import selectinload
+
+            stmt = select(Chapter).where(
+                and_(
+                    Chapter.project_id == project_id,
+                    Chapter.chapter_number <= chapter_number,
+                    Chapter.status == "successful"
+                )
+            ).options(
+                selectinload(Chapter.selected_version)
+            ).order_by(Chapter.chapter_number.desc()).limit(5)  # 最近5章
+
+            result = await db_session.execute(stmt)
+            recent_chapters = result.scalars().all()
+
+            # 在内容中搜索角色名
+            recent_mentions = []
+            for ch in recent_chapters:
+                if ch.selected_version and character.name in ch.selected_version.content:
+                    content = ch.selected_version.content
+                    # 找到角色名的位置，提取上下文
+                    keyword_pos = content.find(character.name)
+                    start_pos = max(0, keyword_pos - 100)
+                    end_pos = min(len(content), keyword_pos + 200)
+                    snippet = content[start_pos:end_pos]
+                    recent_mentions.append(f"第{ch.chapter_number}章：...{snippet}...")
+
+            if recent_mentions:
+                character_info.append("")
+                character_info.append(f"=== 截至第{chapter_number}章的最新状态 ===")
+                character_info.extend(recent_mentions[:2])  # 只显示最近2次提及
+
+        # 4. 添加额外信息
+        if character.extra:
+            character_info.append("")
+            character_info.append("=== 其他信息 ===")
+            import json
+            for key, value in character.extra.items():
+                character_info.append(f"{key}: {value}")
+
+        return "\n".join(character_info)
+
+    except Exception as e:
+        logger.error(f"获取角色状态失败: {str(e)}")
+        return f"查询角色失败: {str(e)}"
 
 
 async def _tool_get_world_setting(
@@ -642,9 +752,75 @@ async def _tool_get_world_setting(
     """获取世界设定"""
     tag = arguments.get("tag")
 
-    # TODO: 实现世界设定查询
-    # 这需要从world_settings表查询
-    return f"世界设定【{tag}】：[暂未实现，需要查询world_settings表]"
+    if not project_id:
+        return "错误：缺少project_id"
+
+    try:
+        from sqlalchemy import select
+        from ..models.novel import NovelBlueprint, Volume
+
+        # ✅ 实现：从蓝图的world_setting字段查询
+        # 1. 先查询蓝图中的世界观设定
+        stmt = select(NovelBlueprint).where(
+            NovelBlueprint.project_id == project_id
+        )
+
+        result = await db_session.execute(stmt)
+        blueprint = result.scalar_one_or_none()
+
+        if not blueprint:
+            return f"未找到项目【{project_id}】的蓝图信息"
+
+        world_setting = blueprint.world_setting or {}
+
+        if not world_setting:
+            return "该项目暂未设定世界观信息"
+
+        # 2. 如果指定了标签，查找特定设定
+        if tag:
+            tag_lower = tag.lower()
+            setting_info = []
+
+            # 搜索匹配的设定
+            for key, value in world_setting.items():
+                if tag_lower in key.lower() or (isinstance(value, str) and tag_lower in value.lower()):
+                    setting_info.append(f"【{key}】")
+                    if isinstance(value, dict):
+                        for sub_key, sub_value in value.items():
+                            setting_info.append(f"  {sub_key}: {sub_value}")
+                    elif isinstance(value, list):
+                        for item in value:
+                            setting_info.append(f"  - {item}")
+                    else:
+                        setting_info.append(f"  {value}")
+                    setting_info.append("")
+
+            if setting_info:
+                return f"=== 世界设定：{tag} ===\n\n" + "\n".join(setting_info)
+            else:
+                # 没找到匹配的，返回所有设定供参考
+                return f"未找到标签【{tag}】的具体设定。\n\n可用的设定标签：{', '.join(world_setting.keys())}"
+
+        # 3. 如果没有指定标签，返回所有世界观设定
+        setting_info = ["=== 世界观设定总览 ===", ""]
+
+        for key, value in world_setting.items():
+            setting_info.append(f"【{key}】")
+            if isinstance(value, dict):
+                for sub_key, sub_value in value.items():
+                    setting_info.append(f"  {sub_key}: {sub_value}")
+            elif isinstance(value, list):
+                for item in value:
+                    setting_info.append(f"  - {item}")
+            else:
+                setting_info.append(f"  {value}")
+            setting_info.append("")
+
+        return "\n".join(setting_info)
+
+    except Exception as e:
+        logger.error(f"获取世界设定失败: {str(e)}")
+        return f"查询世界设定失败: {str(e)}"
 
 
 async def _tool_get_recent_chapters(
@@ -827,10 +1003,16 @@ async def _generate_with_agent_dialogue(
             chapter_number=chapter_number,
         )
         
+        # ✅ 优化：只存储摘要，避免conversation_history膨胀
+        writer_summary = {
+            "writing_notes": writer_result.get("writing_notes", "")[:500],  # 只保留前500字
+            "word_count": len(writer_result.get("full_content", "")),
+            "preview": writer_result.get("full_content", "")[:200] + "..."  # 只保留前200字预览
+        }
         conversation_history.append({
             "agent": "writer",
             "iteration": iteration + 1,
-            "content": writer_result,
+            "content": writer_summary,
             "timestamp": datetime.now(timezone.utc).isoformat()
         })
         
@@ -972,17 +1154,21 @@ async def _call_planner_agent(
                 project_id=project_id,
                 chapter_number=chapter_number,
             )
-            
+
             # 添加到对话
             messages.append({
                 "role": "assistant",
                 "content": response.get("content", ""),
                 "tool_calls": response["tool_calls"]
             })
-            messages.append({
-                "role": "tool",
-                "content": json.dumps(tool_results, ensure_ascii=False)
-            })
+
+            # ✅ 修复：为每个tool_call添加单独的tool消息
+            for tool_call, result in zip(response["tool_calls"], tool_results):
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call["id"],
+                    "content": result  # 已经是字符串，不需要dumps
+                })
         else:
             # 没有工具调用，返回结果
             return response

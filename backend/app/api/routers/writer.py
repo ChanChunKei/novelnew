@@ -427,6 +427,96 @@ async def evaluate_chapter(
     return await _load_project_schema(novel_service, project_id, current_user.id)
 
 
+async def evaluate_outline_versions(
+    outline_versions: list,
+    blueprint_dict: dict,
+    llm_service: LLMService,
+    prompt_service: PromptService,
+    user_id: int
+) -> int:
+    """
+    AI评估多个大纲版本，返回最佳版本的索引
+
+    Args:
+        outline_versions: 大纲版本列表
+        blueprint_dict: 蓝图信息
+        llm_service: LLM服务
+        prompt_service: PromptService
+        user_id: 用户ID
+
+    Returns:
+        最佳版本的索引（0-based）
+    """
+    try:
+        # 1. 获取评估提示词（复用章节评估提示词或创建新的）
+        evaluator_prompt = await prompt_service.get_by_name("outline_evaluation")
+
+        if not evaluator_prompt:
+            # 降级：使用通用评估提示词
+            evaluator_prompt = await prompt_service.get_by_name("evaluation")
+
+        if not evaluator_prompt or not evaluator_prompt.content:
+            logger.warning("缺少大纲评估提示词，默认选择第一个版本")
+            return 0
+
+        # 2. 构建评估payload
+        versions_to_evaluate = []
+        for v in outline_versions:
+            version_info = {
+                "version_id": v["version_id"],
+                "volume_title": v["data"].get("volume_title", ""),
+                "chapters": v["data"].get("chapters", []),
+                "characters": v["data"].get("characters", []),
+                "total_chapters": len(v["data"].get("chapters", []))
+            }
+            versions_to_evaluate.append(version_info)
+
+        evaluator_payload = {
+            "novel_blueprint": blueprint_dict,
+            "content_to_evaluate": {
+                "type": "outline",
+                "versions": versions_to_evaluate
+            },
+            "evaluation_criteria": [
+                "情节连贯性和吸引力",
+                "章节间节奏把控",
+                "冲突和转折设计",
+                "符合蓝图设定",
+                "章节标题吸引力"
+            ]
+        }
+
+        # 3. 调用AI评估
+        evaluation_response = await llm_service.get_llm_response(
+            system_prompt=evaluator_prompt.content,
+            conversation_history=[{
+                "role": "user",
+                "content": json.dumps(evaluator_payload, ensure_ascii=False)
+            }],
+            temperature=0.3,  # 低温度，确保评估客观
+            user_id=user_id,
+            timeout=300.0,
+        )
+
+        evaluation_clean = unwrap_markdown_json(remove_think_tags(evaluation_response))
+        evaluation_data = json.loads(evaluation_clean)
+
+        # 4. 提取最佳版本
+        best_choice = evaluation_data.get("best_choice")
+        if best_choice and isinstance(best_choice, int):
+            best_index = best_choice - 1  # 转为0-based
+            if 0 <= best_index < len(outline_versions):
+                logger.info(f"AI评估推荐大纲版本 {best_choice}，原因: {evaluation_data.get('reason_for_choice', '未提供')}")
+                return best_index
+
+        logger.warning("AI评估结果无效，默认选择第一个版本")
+        return 0
+
+    except Exception as e:
+        logger.error(f"大纲评估失败: {str(e)}，默认选择第一个版本")
+        return 0
+
+
 @router.post("/novels/{project_id}/chapters/outline", response_model=NovelProjectSchema)
 async def generate_chapter_outline(
     project_id: str,
@@ -512,27 +602,64 @@ async def generate_chapter_outline(
         },
     }
 
-    response = await llm_service.get_llm_response(
-        system_prompt=outline_prompt,
-        conversation_history=[{"role": "user", "content": json.dumps(payload, ensure_ascii=False)}],
-        temperature=0.7,
-        user_id=current_user.id,
-        timeout=360.0,
-    )
-    normalized = unwrap_markdown_json(remove_think_tags(response))
-    try:
-        data = json.loads(normalized)
-    except json.JSONDecodeError as exc:
-        logger.error(
-            "项目 %s 大纲生成 JSON 解析失败: %s, 原始内容预览: %s",
-            project_id,
-            exc,
-            normalized[:500],
-        )
+    # 🔄 生成多个版本
+    version_count = max(1, min(request.version_count, 5))  # 限制在1-5之间
+    outline_versions = []
+
+    for version_idx in range(version_count):
+        logger.info(f"项目 {project_id} 正在生成大纲版本 {version_idx + 1}/{version_count}")
+
+        try:
+            response = await llm_service.get_llm_response(
+                system_prompt=outline_prompt,
+                conversation_history=[{"role": "user", "content": json.dumps(payload, ensure_ascii=False)}],
+                temperature=0.7 + (version_idx * 0.1),  # 温度稍微变化，产生差异
+                user_id=current_user.id,
+                timeout=360.0,
+            )
+            normalized = unwrap_markdown_json(remove_think_tags(response))
+            version_data = json.loads(normalized)
+
+            # 验证基本结构
+            if version_data.get("chapters"):
+                outline_versions.append({
+                    "version_id": version_idx + 1,
+                    "data": version_data,
+                    "raw_response": normalized[:500]  # 保留前500字用于日志
+                })
+                logger.info(f"版本 {version_idx + 1} 生成成功，包含 {len(version_data.get('chapters', []))} 个章节")
+            else:
+                logger.warning(f"版本 {version_idx + 1} 生成的内容缺少章节数据")
+
+        except json.JSONDecodeError as exc:
+            logger.warning(f"版本 {version_idx + 1} JSON解析失败: {exc}")
+            continue
+        except Exception as e:
+            logger.error(f"版本 {version_idx + 1} 生成失败: {str(e)}")
+            continue
+
+    if not outline_versions:
         raise HTTPException(
             status_code=500,
-            detail=f"章节大纲生成失败，AI 返回的内容格式不正确: {str(exc)}"
-        ) from exc
+            detail="所有版本均生成失败，请检查提示词或重试"
+        )
+
+    # 🎯 AI评估选择最佳版本（只有多版本时才评估）
+    if len(outline_versions) > 1:
+        logger.info(f"项目 {project_id} 开始AI评估 {len(outline_versions)} 个大纲版本")
+        best_version_idx = await evaluate_outline_versions(
+            outline_versions=outline_versions,
+            blueprint_dict=blueprint_dict,
+            llm_service=llm_service,
+            prompt_service=prompt_service,
+            user_id=current_user.id
+        )
+        data = outline_versions[best_version_idx]["data"]
+        logger.info(f"项目 {project_id} AI选择了版本 {best_version_idx + 1} 作为最佳大纲")
+    else:
+        # 只有一个版本，直接使用
+        data = outline_versions[0]["data"]
+        logger.info(f"项目 {project_id} 只生成了1个版本，直接使用")
 
     # 提取数据
     volume_title = data.get("volume_title", "")

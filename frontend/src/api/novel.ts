@@ -333,13 +333,15 @@ export class NovelAPI {
   static async generateChapterOutline(
     projectId: string,
     startChapter: number,
-    numChapters: number
+    numChapters: number,
+    versionCount: number = 3
   ): Promise<NovelProject> {
     return request(`${WRITER_BASE}/${projectId}/chapters/outline`, {
       method: 'POST',
       body: JSON.stringify({
         start_chapter: startChapter,
-        num_chapters: numChapters
+        num_chapters: numChapters,
+        version_count: versionCount
       })
     })
   }
