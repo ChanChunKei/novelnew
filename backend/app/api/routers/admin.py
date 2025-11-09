@@ -2,7 +2,7 @@ import logging
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.dependencies import get_current_admin
@@ -158,6 +158,56 @@ async def list_novel_projects(
     projects = await service.list_projects_for_admin()
     logger.info("管理员查看项目列表，共 %s 个", len(projects))
     return projects
+
+
+@router.delete("/novel-projects/unfinished-inspirations", status_code=status.HTTP_200_OK)
+async def delete_unfinished_inspirations(
+    session: AsyncSession = Depends(get_session),
+    current_admin=Depends(get_current_admin),
+) -> dict:
+    """删除所有未完成的灵感项目（未命名或使用默认名称的项目）
+
+    ✅ 性能优化：在数据库层面筛选，避免加载所有项目到内存
+    """
+
+    # ✅ 在数据库层面构建筛选条件
+    conditions = [
+        NovelProject.title.is_(None),  # 标题为NULL
+        func.trim(NovelProject.title) == '',  # 标题为空字符串（去除空格后）
+    ]
+
+    # 添加各种默认名称的条件（不区分大小写）
+    default_names = ['未命名', '新项目', 'untitled', 'new project', '未命名灵感']
+    for pattern in default_names:
+        conditions.append(func.lower(func.trim(NovelProject.title)) == pattern)
+
+    # ✅ 在数据库层面筛选，只查询符合条件的项目
+    result = await session.execute(
+        select(NovelProject).where(or_(*conditions))
+    )
+    unfinished_projects = result.scalars().all()
+
+    # 收集ID并删除
+    deleted_ids = [project.id for project in unfinished_projects]
+    deleted_count = len(deleted_ids)
+
+    for project in unfinished_projects:
+        await session.delete(project)
+
+    await session.commit()
+
+    logger.info(
+        "管理员 %s 删除了 %s 个未完成灵感项目: %s",
+        current_admin.username,
+        deleted_count,
+        deleted_ids[:10]  # 只记录前10个ID
+    )
+
+    return {
+        "deleted_count": deleted_count,
+        "deleted_ids": deleted_ids,
+        "message": f"成功删除 {deleted_count} 个未完成的灵感项目"
+    }
 
 
 @router.get("/novel-projects/{project_id}", response_model=NovelProjectSchema)

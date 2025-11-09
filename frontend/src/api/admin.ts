@@ -196,6 +196,12 @@ export class AdminAPI {
     return this.request(`/novel-projects/${projectId}/chapters/${chapterNumber}`)
   }
 
+  static deleteUnfinishedInspirations(): Promise<{ deleted_count: number; deleted_ids: string[]; message: string }> {
+    return this.request('/novel-projects/unfinished-inspirations', {
+      method: 'DELETE'
+    })
+  }
+
   // Prompts
   static listPrompts(): Promise<PromptItem[]> {
     return this.request('/prompts')

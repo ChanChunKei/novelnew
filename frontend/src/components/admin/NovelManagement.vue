@@ -2,8 +2,19 @@
   <n-card class="novel-management-card" size="large" :bordered="false">
     <template #header>
       <div class="card-header">
-        <span class="card-title">小说管理</span>
-        <n-tag size="small" type="primary" round>共 {{ novels.length }} 项</n-tag>
+        <div class="header-left">
+          <span class="card-title">小说管理</span>
+          <n-tag size="small" type="primary" round>共 {{ novels.length }} 项</n-tag>
+        </div>
+        <n-button
+          type="error"
+          size="small"
+          ghost
+          :loading="deletingInspirations"
+          @click="handleDeleteUnfinishedInspirations"
+        >
+          删除未完成灵感
+        </n-button>
       </div>
     </template>
 
@@ -85,6 +96,8 @@ import {
   NSpin,
   NTag,
   NSpace,
+  useDialog,
+  useMessage,
   type DataTableColumns
 } from 'naive-ui'
 
@@ -95,7 +108,10 @@ const novels = ref<AdminNovelSummary[]>([])
 const loading = ref(true)
 const error = ref<string | null>(null)
 const isMobile = ref(false)
+const deletingInspirations = ref(false)
 const router = useRouter()
+const dialog = useDialog()
+const message = useMessage()
 
 const pagination = {
   pageSize: 8,
@@ -197,6 +213,28 @@ const fetchNovels = async () => {
   }
 }
 
+const handleDeleteUnfinishedInspirations = () => {
+  dialog.warning({
+    title: '确认删除',
+    content: '确定要删除所有未完成的灵感项目吗？此操作不可恢复！',
+    positiveText: '确定删除',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      deletingInspirations.value = true
+      try {
+        const result = await AdminAPI.deleteUnfinishedInspirations()
+        message.success(result.message || `成功删除 ${result.deleted_count} 个未完成的灵感项目`)
+        // 重新加载项目列表
+        await fetchNovels()
+      } catch (e) {
+        message.error(e instanceof Error ? e.message : '删除失败')
+      } finally {
+        deletingInspirations.value = false
+      }
+    }
+  })
+}
+
 onMounted(() => {
   updateLayout()
   window.addEventListener('resize', updateLayout)
@@ -218,6 +256,12 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 12px;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
   gap: 12px;
 }
 

@@ -463,24 +463,14 @@ const formatTime = (time: string | null) => {
 
 onMounted(async () => {
   try {
-    // 1. 先检查项目标题，判断是否为未命名灵感
+    // ✅ 移除验证：允许未命名的灵感项目使用自动生成器
     checkingOutlines.value = true
-    const sectionData = await api.get(`/api/novels/${projectId}/sections/overview`)
-    const title = sectionData?.data?.title || ''
 
-    // 检查项目名称是否有效
-    isValidProject.value = title &&
-                          title.trim() !== '' &&
-                          !title.match(/^(新项目|未命名|Untitled|New Project|未命名灵感)$/i)
-
+    // 直接允许所有项目使用自动生成器
+    isValidProject.value = true
     checkingOutlines.value = false
 
-    // 如果是未命名灵感项目，直接返回不加载任务
-    if (!isValidProject.value) {
-      return
-    }
-
-    // 2. 检查是否有现有任务
+    // 检查是否有现有任务
     const tasks = await api.get(`/api/auto-generator/projects/${projectId}/tasks`)
     const taskList = Array.isArray(tasks) ? tasks : []
 
@@ -503,8 +493,8 @@ onMounted(async () => {
   } catch (error) {
     console.error('加载失败:', error)
     checkingOutlines.value = false
-    // 出错时假设是无效项目，显示警告
-    isValidProject.value = false
+    // ✅ 出错时也允许使用，让后端来处理错误
+    isValidProject.value = true
   }
 })
 
