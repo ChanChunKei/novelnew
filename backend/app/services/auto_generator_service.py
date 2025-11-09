@@ -1133,7 +1133,10 @@ class AutoGeneratorService:
         outline_versions: list,
         blueprint_dict: dict,
         llm_service: LLMService,
-        prompt_service: PromptService
+        prompt_service: PromptService,
+        completed_chapters: list = None,
+        previous_two_chapters: list = None,
+        start_chapter: int = None
     ) -> int:
         """
         AI评估多个大纲版本，返回最佳版本的索引
@@ -1145,6 +1148,9 @@ class AutoGeneratorService:
             blueprint_dict: 蓝图信息字典
             llm_service: LLM服务
             prompt_service: 提示词服务
+            completed_chapters: 已完成章节摘要列表
+            previous_two_chapters: 前两章完整内容
+            start_chapter: 新大纲起始章节号
 
         Returns:
             最佳版本的索引（0-based）
@@ -1176,6 +1182,12 @@ class AutoGeneratorService:
 
             evaluator_payload = {
                 "novel_blueprint": blueprint_dict,
+                "completed_chapters": completed_chapters or [],
+                "previous_chapters_content": previous_two_chapters or [],
+                "generation_context": {
+                    "start_chapter": start_chapter,
+                    "total_previous_chapters": len(completed_chapters) if completed_chapters else 0
+                },
                 "content_to_evaluate": {
                     "type": "outline",
                     "versions": versions_to_evaluate
@@ -1312,6 +1324,39 @@ class AutoGeneratorService:
             f"已收集 {len(completed_summaries)} 章已完成章节摘要，用于生成新大纲"
         )
 
+        # ✅ 获取前两章的完整内容（用于大纲评估）
+        previous_two_chapters = []
+        if start_chapter > 1:
+            prev_chapters_stmt = (
+                select(Chapter)
+                .where(
+                    Chapter.project_id == task.project_id,
+                    Chapter.chapter_number < start_chapter
+                )
+                .options(selectinload(Chapter.selected_version))
+                .order_by(Chapter.chapter_number.desc())
+                .limit(2)
+            )
+            prev_chapters_result = await db.execute(prev_chapters_stmt)
+            prev_chapters = prev_chapters_result.scalars().all()
+
+            for ch in reversed(prev_chapters):  # 反转顺序，让最早的在前
+                if ch.selected_version and ch.selected_version.content:
+                    # 获取章节标题
+                    outline_stmt = select(ChapterOutline).where(
+                        ChapterOutline.project_id == task.project_id,
+                        ChapterOutline.chapter_number == ch.chapter_number
+                    )
+                    outline_result = await db.execute(outline_stmt)
+                    outline = outline_result.scalar_one_or_none()
+
+                    chapter_title = outline.title if outline else f"第{ch.chapter_number}章"
+                    previous_two_chapters.append({
+                        "number": ch.chapter_number,
+                        "title": chapter_title,
+                        "content": ch.selected_version.content
+                    })
+
         # 获取大纲提示词
         prompt_service = PromptService(db)
         outline_prompt = await prompt_service.get_prompt("outline")
@@ -1433,7 +1478,10 @@ class AutoGeneratorService:
                 outline_versions=outline_versions,
                 blueprint_dict=blueprint_dict,
                 llm_service=LLMService(db),
-                prompt_service=prompt_service
+                prompt_service=prompt_service,
+                completed_chapters=completed_summaries,
+                previous_two_chapters=previous_two_chapters,
+                start_chapter=start_chapter
             )
 
             data = outline_versions[best_version_idx]["data"]
