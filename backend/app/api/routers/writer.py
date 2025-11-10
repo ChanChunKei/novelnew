@@ -37,6 +37,43 @@ router = APIRouter(prefix="/api/writer", tags=["Writer"])
 logger = logging.getLogger(__name__)
 
 
+async def _invoke_with_specific_route(
+    llm_service: LLMService,
+    user_route_config: dict,
+    route_index: int,
+    messages: List[Dict[str, str]],
+    temperature: float,
+    timeout: float,
+    user_id: int,
+) -> str:
+    """使用指定路由索引调用LLM"""
+    routes = user_route_config.get("routes", [])
+    if route_index >= len(routes) or not routes[route_index].get("enabled"):
+        raise ValueError(f"路由索引 {route_index} 无效或未启用")
+
+    route = routes[route_index]
+
+    # 使用LLMClient直接调用
+    from ...services.llm_client import LLMClient
+    from ...models.chat import ChatMessage
+
+    client = LLMClient(api_key=route["apiKey"], base_url=route["url"])
+    chat_messages = [ChatMessage(role=msg["role"], content=msg["content"]) for msg in messages]
+
+    # 调用并收集响应
+    response_chunks = []
+    async for chunk in client.stream_chat(
+        messages=chat_messages,
+        model=route["model"],
+        temperature=temperature,
+        timeout=timeout,
+        response_format="json_object",
+    ):
+        response_chunks.append(chunk)
+
+    return "".join(response_chunks)
+
+
 async def _load_project_schema(service: NovelService, project_id: str, user_id: int) -> NovelProjectSchema:
     return await service.get_project_schema(project_id, user_id)
 
@@ -235,15 +272,64 @@ async def generate_chapter(
     ]
     prompt_input = "\n\n".join(f"{title}\n{content}" for title, content in prompt_sections if content)
     logger.debug("章节写作提示词：%s\n%s", writer_prompt, prompt_input)
+    # 🎨 读取混合生成配置
+    user_route_config = await llm_service.get_user_route_config(current_user.id)
+    mixed_generation_config = None
+    if user_route_config and user_route_config.get("mixedGeneration", {}).get("enabled"):
+        mixed_generation_config = user_route_config["mixedGeneration"]
+        logger.info(f"项目 {project_id} 第 {request.chapter_number} 章启用混合生成模式")
+
     async def _generate_single_version(idx: int) -> Dict:
         try:
-            response = await llm_service.get_llm_response(
-                system_prompt=writer_prompt,
-                conversation_history=[{"role": "user", "content": prompt_input}],
-                temperature=0.9,
-                user_id=current_user.id,
-                timeout=600.0,
-            )
+            # 🎨 混合生成：为每个版本选择不同的路由
+            if mixed_generation_config:
+                route_indices = mixed_generation_config.get("chapter", [0, 1, 0, 1, 2])
+                route_index = route_indices[idx] if idx < len(route_indices) else 0
+
+                # 如果是随机(-1)，从启用的路由中随机选一个
+                if route_index == -1:
+                    import random
+                    enabled_routes = [i for i, r in enumerate(user_route_config["routes"]) if r.get("enabled")]
+                    route_index = random.choice(enabled_routes) if enabled_routes else 0
+
+                # 获取路由信息
+                routes = user_route_config.get("routes", [])
+                if route_index < len(routes) and routes[route_index].get("enabled"):
+                    logger.info(f"第 {request.chapter_number} 章版本 {idx + 1} 使用路由 {route_index + 1}: {routes[route_index].get('model')}")
+
+                    # 使用指定路由调用
+                    messages = [
+                        {"role": "system", "content": writer_prompt},
+                        {"role": "user", "content": prompt_input}
+                    ]
+                    response = await _invoke_with_specific_route(
+                        llm_service=llm_service,
+                        user_route_config=user_route_config,
+                        route_index=route_index,
+                        messages=messages,
+                        temperature=0.9,
+                        timeout=600.0,
+                        user_id=current_user.id,
+                    )
+                else:
+                    # 路由无效，使用默认方式
+                    response = await llm_service.get_llm_response(
+                        system_prompt=writer_prompt,
+                        conversation_history=[{"role": "user", "content": prompt_input}],
+                        temperature=0.9,
+                        user_id=current_user.id,
+                        timeout=600.0,
+                    )
+            else:
+                # 非混合模式，使用默认方式
+                response = await llm_service.get_llm_response(
+                    system_prompt=writer_prompt,
+                    conversation_history=[{"role": "user", "content": prompt_input}],
+                    temperature=0.9,
+                    user_id=current_user.id,
+                    timeout=600.0,
+                )
+
             cleaned = remove_think_tags(response)
             normalized = unwrap_markdown_json(cleaned)
             try:
@@ -413,12 +499,17 @@ async def evaluate_chapter(
         },
     }
 
-    evaluation_raw = await llm_service.get_llm_response(
+    # 使用AI Orchestrator的路由系统进行评估
+    from ...services.ai_orchestrator_helper import call_ai_function
+    from ...config.ai_function_config import AIFunctionType
+
+    evaluation_raw = await call_ai_function(
+        db_session=session,
+        function=AIFunctionType.CHAPTER_EVALUATION,
         system_prompt=evaluator_prompt,
-        conversation_history=[{"role": "user", "content": json.dumps(evaluator_payload, ensure_ascii=False)}],
-        temperature=0.3,
+        user_prompt=json.dumps(evaluator_payload, ensure_ascii=False),
         user_id=current_user.id,
-        timeout=360.0,
+        response_format="json_object",
     )
     evaluation_clean = remove_think_tags(evaluation_raw)
     await novel_service.add_chapter_evaluation(chapter, None, evaluation_clean)
@@ -455,13 +546,13 @@ async def evaluate_outline_versions(
     """
     try:
         # 1. 获取评估提示词
-        evaluator_prompt = await prompt_service.get_by_name("outline_evaluation")
+        evaluator_prompt_content = await prompt_service.get_prompt("outline_evaluation")
 
-        if not evaluator_prompt:
+        if not evaluator_prompt_content:
             # 降级：使用通用评估提示词
-            evaluator_prompt = await prompt_service.get_by_name("evaluation")
+            evaluator_prompt_content = await prompt_service.get_prompt("evaluation")
 
-        if not evaluator_prompt or not evaluator_prompt.content:
+        if not evaluator_prompt_content:
             logger.warning("缺少大纲评估提示词，默认选择第一个版本")
             return 0
 
@@ -498,16 +589,17 @@ async def evaluate_outline_versions(
             ]
         }
 
-        # 3. 调用AI评估
-        evaluation_response = await llm_service.get_llm_response(
-            system_prompt=evaluator_prompt.content,
-            conversation_history=[{
-                "role": "user",
-                "content": json.dumps(evaluator_payload, ensure_ascii=False)
-            }],
-            temperature=0.3,  # 低温度，确保评估客观
+        # 3. 调用AI评估（使用AI Orchestrator的路由系统）
+        from ...services.ai_orchestrator_helper import call_ai_function
+        from ...config.ai_function_config import AIFunctionType
+
+        evaluation_response = await call_ai_function(
+            db_session=llm_service.db_session,
+            function=AIFunctionType.OUTLINE_EVALUATION,
+            system_prompt=evaluator_prompt_content,
+            user_prompt=json.dumps(evaluator_payload, ensure_ascii=False),
             user_id=user_id,
-            timeout=300.0,
+            response_format="json_object",
         )
 
         evaluation_clean = unwrap_markdown_json(remove_think_tags(evaluation_response))
@@ -618,17 +710,66 @@ async def generate_chapter_outline(
     version_count = max(1, min(request.version_count, 5))  # 限制在1-5之间
     outline_versions = []
 
+    # 🎨 读取混合生成配置
+    user_route_config = await llm_service.get_user_route_config(current_user.id)
+    mixed_generation_config = None
+    if user_route_config and user_route_config.get("mixedGeneration", {}).get("enabled"):
+        mixed_generation_config = user_route_config["mixedGeneration"]
+        logger.info(f"项目 {project_id} 启用混合生成模式：{mixed_generation_config}")
+
     for version_idx in range(version_count):
         logger.info(f"项目 {project_id} 正在生成大纲版本 {version_idx + 1}/{version_count}")
 
         try:
-            response = await llm_service.get_llm_response(
-                system_prompt=outline_prompt,
-                conversation_history=[{"role": "user", "content": json.dumps(payload, ensure_ascii=False)}],
-                temperature=0.7 + (version_idx * 0.1),  # 温度稍微变化，产生差异
-                user_id=current_user.id,
-                timeout=360.0,
-            )
+            # 🎨 混合生成：为每个版本选择不同的路由
+            if mixed_generation_config:
+                route_indices = mixed_generation_config.get("outline", [0, 1, 2, 0, 1])
+                route_index = route_indices[version_idx] if version_idx < len(route_indices) else 0
+
+                # 如果是随机(-1)，从启用的路由中随机选一个
+                if route_index == -1:
+                    import random
+                    enabled_routes = [i for i, r in enumerate(user_route_config["routes"]) if r.get("enabled")]
+                    route_index = random.choice(enabled_routes) if enabled_routes else 0
+
+                # 获取路由信息
+                routes = user_route_config.get("routes", [])
+                if route_index < len(routes) and routes[route_index].get("enabled"):
+                    route = routes[route_index]
+                    logger.info(f"版本 {version_idx + 1} 使用路由 {route_index + 1}: {route.get('model')}")
+
+                    # 使用指定路由调用
+                    messages = [
+                        {"role": "system", "content": outline_prompt},
+                        {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}
+                    ]
+                    response = await _invoke_with_specific_route(
+                        llm_service=llm_service,
+                        user_route_config=user_route_config,
+                        route_index=route_index,
+                        messages=messages,
+                        temperature=0.7 + (version_idx * 0.1),
+                        timeout=360.0,
+                        user_id=current_user.id,
+                    )
+                else:
+                    # 路由无效，使用默认方式
+                    response = await llm_service.get_llm_response(
+                        system_prompt=outline_prompt,
+                        conversation_history=[{"role": "user", "content": json.dumps(payload, ensure_ascii=False)}],
+                        temperature=0.7 + (version_idx * 0.1),
+                        user_id=current_user.id,
+                        timeout=360.0,
+                    )
+            else:
+                # 非混合模式，使用默认方式
+                response = await llm_service.get_llm_response(
+                    system_prompt=outline_prompt,
+                    conversation_history=[{"role": "user", "content": json.dumps(payload, ensure_ascii=False)}],
+                    temperature=0.7 + (version_idx * 0.1),
+                    user_id=current_user.id,
+                    timeout=360.0,
+                )
             normalized = unwrap_markdown_json(remove_think_tags(response))
             version_data = json.loads(normalized)
 

@@ -127,6 +127,11 @@ class BlueprintGenerationResponse(BaseModel):
     ai_message: str
 
 
+class BlueprintRegenerateRequest(BaseModel):
+    """蓝图重新生成请求"""
+    additional_feedback: str  # 用户补充的信息
+
+
 class ChapterGenerationResponse(BaseModel):
     ai_message: str
     chapter_versions: List[Dict[str, Any]]

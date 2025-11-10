@@ -45,6 +45,12 @@ class AIFunctionType(str, Enum):
     # F11: AI去味
     AI_DENOISING = "ai_denoising"
 
+    # F12: 大纲版本评估
+    OUTLINE_EVALUATION = "outline_evaluation"
+
+    # F13: 章节版本评估
+    CHAPTER_EVALUATION = "chapter_evaluation"
+
 
 class ProviderConfig(BaseModel):
     """API提供商配置"""
@@ -229,6 +235,44 @@ AI_FUNCTION_ROUTES: Dict[AIFunctionType, FunctionRouteConfig] = {
         timeout=60.0,
         max_retries=2,
         required=False,  # 失败返回原文
+    ),
+
+    # F12: 大纲版本评估 - 使用DeepSeek（便宜且客观）
+    AIFunctionType.OUTLINE_EVALUATION: FunctionRouteConfig(
+        function_type=AIFunctionType.OUTLINE_EVALUATION,
+        primary=ProviderConfig(
+            provider="siliconflow",
+            model="deepseek-ai/DeepSeek-R1",
+        ),
+        fallbacks=[
+            ProviderConfig(
+                provider="gemini",
+                model="gemini-2.0-flash-exp",
+            ),
+        ],
+        temperature=0.3,  # 低温度，确保评估客观
+        timeout=120.0,
+        max_retries=2,
+        required=False,  # 失败则选择第一个版本
+    ),
+
+    # F13: 章节版本评估 - 使用DeepSeek（便宜且客观）
+    AIFunctionType.CHAPTER_EVALUATION: FunctionRouteConfig(
+        function_type=AIFunctionType.CHAPTER_EVALUATION,
+        primary=ProviderConfig(
+            provider="siliconflow",
+            model="deepseek-ai/DeepSeek-R1",
+        ),
+        fallbacks=[
+            ProviderConfig(
+                provider="gemini",
+                model="gemini-2.0-flash-exp",
+            ),
+        ],
+        temperature=0.3,  # 低温度，确保评估客观
+        timeout=120.0,
+        max_retries=2,
+        required=False,  # 失败则选择第一个版本
     ),
 }
 

@@ -11,6 +11,7 @@ from ...schemas.novel import (
     Blueprint,
     BlueprintGenerationResponse,
     BlueprintPatch,
+    BlueprintRegenerateRequest,
     Chapter as ChapterSchema,
     ConverseRequest,
     ConverseResponse,
@@ -389,6 +390,143 @@ async def generate_blueprint(
 
     ai_message = (
         "太棒了！我已经根据我们的对话整理出完整的小说蓝图。请确认是否进入写作阶段，或提出修改意见。"
+    )
+    return BlueprintGenerationResponse(blueprint=blueprint, ai_message=ai_message)
+
+
+@router.post("/{project_id}/blueprint/regenerate", response_model=BlueprintGenerationResponse)
+async def regenerate_blueprint(
+    project_id: str,
+    request: BlueprintRegenerateRequest,
+    session: AsyncSession = Depends(get_session),
+    current_user: UserInDB = Depends(get_current_user),
+) -> BlueprintGenerationResponse:
+    """根据用户补充的信息重新生成蓝图。"""
+    novel_service = NovelService(session)
+    prompt_service = PromptService(session)
+    llm_service = LLMService(session)
+
+    project = await novel_service.ensure_project_owner(project_id, current_user.id)
+    logger.info("项目 %s 开始重新生成蓝图，补充信息: %s", project_id, request.additional_feedback[:100])
+
+    # 获取原有的对话历史
+    history_records = await novel_service.list_conversations(project_id)
+    if not history_records:
+        logger.warning("项目 %s 缺少对话历史，无法重新生成蓝图", project_id)
+        raise HTTPException(status_code=400, detail="缺少对话历史，请先完成概念对话后再生成蓝图")
+
+    # 格式化对话历史
+    formatted_history: List[Dict[str, str]] = []
+    for record in history_records:
+        role = record.role
+        content = record.content
+        if not role or not content:
+            continue
+        try:
+            normalized = unwrap_markdown_json(content)
+            data = json.loads(normalized)
+            if role == "user":
+                user_value = data.get("value", data)
+                if isinstance(user_value, str):
+                    formatted_history.append({"role": "user", "content": user_value})
+            elif role == "assistant":
+                ai_message = data.get("ai_message") if isinstance(data, dict) else None
+                if ai_message:
+                    formatted_history.append({"role": "assistant", "content": ai_message})
+        except (json.JSONDecodeError, AttributeError):
+            continue
+
+    if not formatted_history:
+        logger.warning("项目 %s 对话历史格式异常，无法提取有效内容", project_id)
+        raise HTTPException(
+            status_code=400,
+            detail="无法从历史对话中提取有效内容，请检查对话历史格式或重新进行概念对话"
+        )
+
+    # ✅ 添加用户的补充信息作为新的用户消息
+    formatted_history.append({
+        "role": "user",
+        "content": f"根据之前的对话和已生成的蓝图，我想补充以下信息，请重新生成蓝图：\n\n{request.additional_feedback}"
+    })
+
+    system_prompt = _ensure_prompt(await prompt_service.get_prompt("screenwriting"), "screenwriting")
+
+    # 使用AI Orchestrator重新生成蓝图
+    from app.services.ai_orchestrator_helper import generate_blueprint as generate_blueprint_helper
+
+    blueprint_raw = await generate_blueprint_helper(
+        db_session=session,
+        system_prompt=system_prompt,
+        conversation_history=formatted_history,  # ✅ 传递包含补充信息的完整对话历史
+        user_id=current_user.id,
+        temperature=0.3,
+        timeout=480.0,
+    )
+
+    # ✅ 检查 AI 响应是否为空
+    if not blueprint_raw:
+        logger.error("项目 %s 蓝图重新生成失败: AI 返回空响应", project_id)
+        raise HTTPException(
+            status_code=500,
+            detail="蓝图重新生成失败，AI 未返回任何内容。请检查 AI 配置或重试。"
+        )
+
+    blueprint_raw = remove_think_tags(blueprint_raw)
+    blueprint_normalized = unwrap_markdown_json(blueprint_raw)
+    blueprint_sanitized = sanitize_json_like_text(blueprint_normalized)
+
+    # ✅ 检查处理后的结果是否为空
+    if not blueprint_sanitized:
+        logger.error(
+            "项目 %s 蓝图重新生成失败: 处理后为空\n原始响应: %s\n标准化后: %s",
+            project_id,
+            blueprint_raw[:500] if blueprint_raw else "None",
+            blueprint_normalized[:500] if blueprint_normalized else "None",
+        )
+        raise HTTPException(
+            status_code=500,
+            detail="蓝图重新生成失败，AI 返回的内容无法解析。请重试或联系管理员。"
+        )
+
+    try:
+        blueprint_data = json.loads(blueprint_sanitized)
+    except json.JSONDecodeError as exc:
+        logger.error(
+            "项目 %s 蓝图重新生成 JSON 解析失败: %s\n原始响应: %s\n标准化后: %s\n清洗后: %s",
+            project_id,
+            exc,
+            blueprint_raw[:500] if blueprint_raw else "None",
+            blueprint_normalized[:500] if blueprint_normalized else "None",
+            blueprint_sanitized[:500] if blueprint_sanitized else "None",
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"蓝图重新生成失败，AI 返回的内容格式不正确。请重试或联系管理员。错误详情: {str(exc)}"
+        ) from exc
+
+    chapter_outline = blueprint_data.get("chapter_outline", [])
+    logger.info(
+        f"项目 {project_id} AI 重新生成了 {len(chapter_outline)} 章大纲"
+    )
+
+    # 保存新蓝图
+    blueprint = Blueprint(**blueprint_data)
+    await novel_service.replace_blueprint(project_id, blueprint)
+    if blueprint.title:
+        project.title = blueprint.title
+        project.status = "blueprint_ready"
+        await session.commit()
+        logger.info("项目 %s 更新标题为 %s，并标记为 blueprint_ready", project_id, blueprint.title)
+
+    # ✅ 将用户的补充信息保存到对话历史中（可选，方便后续查看）
+    await novel_service.add_conversation_record(
+        project_id=project_id,
+        role="user",
+        content=json.dumps({"value": request.additional_feedback}, ensure_ascii=False)
+    )
+
+    ai_message = (
+        "好的！我已经根据你补充的信息重新生成了蓝图。请查看新的蓝图内容，如果还有需要调整的地方，可以继续补充信息重新生成。"
     )
     return BlueprintGenerationResponse(blueprint=blueprint, ai_message=ai_message)
 
