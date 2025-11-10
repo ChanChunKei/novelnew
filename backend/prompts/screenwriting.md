@@ -88,7 +88,38 @@
     {
       "volume_number": 1,
       "title": "string",
-      "description": "string"
+      "description": "string",
+      "characters": [
+        {
+          "name": "string",
+          "identity": "string",
+          "personality": "string",
+          "goals": "string",
+          "abilities": "string"
+        }
+      ],
+      "relationships": [
+        {
+          "character_from": "string",
+          "character_to": "string",
+          "description": "string"
+        }
+      ],
+      "world_setting": {
+        "core_rules": "string",
+        "key_locations": [
+          {
+            "name": "string",
+            "description": "string"
+          }
+        ],
+        "factions": [
+          {
+            "name": "string",
+            "description": "string"
+          }
+        ]
+      }
     }
   ],
   "chapter_outline": [
@@ -115,4 +146,12 @@
    - 第一卷结尾：阶段性成就 + 更大悬念（引向第二卷）
 
    在 full_synopsis 中说明总章节数规划。后续卷的章节将通过自动生成器按需生成。
-4. **volumes 数组必须包含第一卷的信息**：为第一卷创作一个富有文学性和象征意义的卷名（3-8个字），要求和本卷核心内容有关。volume_number 为 1，description 可以简要说明这一卷的主题。
+4. **volumes 数组必须包含第一卷的完整信息和快照数据**：
+   - 为第一卷创作一个富有文学性和象征意义的卷名（3-8个字），要求和本卷核心内容有关
+   - `volume_number` 必须为 1
+   - `description` 简要说明这一卷的主题
+   - **重要：第一卷必须包含完整的快照数据**：
+     - `characters`: 第一卷中主要登场角色的快照（可以是顶层characters的子集或变体，反映第一卷结束时的角色状态）
+     - `relationships`: 第一卷中角色关系的快照（反映第一卷结束时的关系网络）
+     - `world_setting`: 第一卷涉及的世界观快照（可以是顶层world_setting的子集，聚焦于第一卷实际展现的世界观元素）
+   - 快照数据应该聚焦于第一卷的实际内容和进度，而非整个小说的全部设定

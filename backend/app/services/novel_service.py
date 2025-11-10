@@ -346,11 +346,25 @@ class NovelService:
         await self.session.execute(delete(Volume).where(Volume.project_id == project_id))
         volume_id_map = {}  # volume_number -> volume_id
         for volume in blueprint.volumes:
+            # 🔥 提取第一卷的快照数据（如果有）
+            snapshot_characters = None
+            snapshot_relationships = None
+            snapshot_world_setting = None
+
+            if volume.volume_number == 1:
+                # 第一卷可能包含快照数据
+                snapshot_characters = volume.characters
+                snapshot_relationships = volume.relationships
+                snapshot_world_setting = volume.world_setting
+
             vol_record = Volume(
                 project_id=project_id,
                 volume_number=volume.volume_number,
                 title=volume.title,
                 description=volume.description,
+                characters=snapshot_characters,
+                relationships=snapshot_relationships,
+                world_setting=snapshot_world_setting,
             )
             self.session.add(vol_record)
             await self.session.flush()  # 获取ID

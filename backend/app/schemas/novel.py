@@ -60,6 +60,10 @@ class Volume(BaseModel):
     volume_number: int
     title: str
     description: Optional[str] = None
+    # 🔥 第一卷可能包含快照数据（蓝图生成时返回）
+    characters: Optional[List[Dict[str, Any]]] = None
+    relationships: Optional[List[Dict[str, Any]]] = None
+    world_setting: Optional[Dict[str, Any]] = None
 
 
 class ChapterOutline(BaseModel):
