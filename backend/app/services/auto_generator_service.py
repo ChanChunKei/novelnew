@@ -26,6 +26,7 @@ from ..utils.metrics import (
     track_duration, chapter_generation_duration,
     chapter_generation_total
 )
+from ..utils.json_utils import remove_think_tags, unwrap_markdown_json
 from ..db.session import retry_on_db_lock
 
 logger = logging.getLogger(__name__)
