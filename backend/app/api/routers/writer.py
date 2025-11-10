@@ -159,6 +159,31 @@ async def generate_chapter(
     chapter.status = "generating"
     await session.commit()
 
+    # 🔥 先获取 blueprint 和分卷快照，用于生成摘要
+    project_schema = await novel_service._serialize_project(project)
+    blueprint_dict = project_schema.blueprint.model_dump()
+
+    # 🔥 获取所有分卷快照（用于生成摘要）
+    from sqlalchemy import select
+    from ...models.novel import Volume
+
+    volumes_stmt = select(Volume).where(Volume.project_id == project_id).order_by(Volume.volume_number)
+    volumes_result = await session.execute(volumes_stmt)
+    all_volumes = volumes_result.scalars().all()
+
+    # 构建 volume_id 到快照的映射
+    volumes_by_id = {}
+    for vol in all_volumes:
+        vol_snapshot = {
+            "volume_number": vol.volume_number,
+            "title": vol.title,
+            "characters": vol.characters or [],
+            "relationships": vol.relationships or [],
+            "world_setting": vol.world_setting or {},
+            "is_current": False
+        }
+        volumes_by_id[vol.id] = vol_snapshot
+
     outlines_map = {item.chapter_number: item for item in project.outlines}
     # 收集所有可用的历史章节摘要，便于在 Prompt 中提供前情背景
     completed_chapters = []
@@ -168,11 +193,22 @@ async def generate_chapter(
         if existing.selected_version is None or not existing.selected_version.content:
             continue
         if not existing.real_summary:
+            # 🔥 构建该章节的分卷快照上下文
+            chapter_volumes_snapshot = []
+            for vol_id, vol_data in volumes_by_id.items():
+                vol_copy = vol_data.copy()
+                # 标注该章节所属的卷
+                if existing.volume_id and vol_id == existing.volume_id:
+                    vol_copy["is_current"] = True
+                chapter_volumes_snapshot.append(vol_copy)
+
             summary = await llm_service.get_summary(
                 existing.selected_version.content,
                 temperature=0.15,
                 user_id=current_user.id,
                 timeout=180.0,
+                blueprint_dict=blueprint_dict,
+                volumes_snapshot=chapter_volumes_snapshot,
             )
             existing.real_summary = remove_think_tags(summary)
             await session.commit()
@@ -185,9 +221,6 @@ async def generate_chapter(
                 "summary": existing.real_summary,
             }
         )
-
-    project_schema = await novel_service._serialize_project(project)
-    blueprint_dict = project_schema.blueprint.model_dump()
 
     if "relationships" in blueprint_dict and blueprint_dict["relationships"]:
         for relation in blueprint_dict["relationships"]:
@@ -480,11 +513,40 @@ async def select_chapter_version(
         request.version_index,
     )
     if selected and selected.content:
+        # 🔥 获取 blueprint 和分卷快照，用于生成摘要
+        project_schema = await novel_service._serialize_project(project)
+        blueprint_dict = project_schema.blueprint.model_dump()
+
+        # 🔥 获取所有分卷的快照数据，并标注当前卷
+        from sqlalchemy import select
+        from ...models.novel import Volume
+
+        volumes_stmt = select(Volume).where(Volume.project_id == project_id).order_by(Volume.volume_number)
+        volumes_result = await session.execute(volumes_stmt)
+        all_volumes = volumes_result.scalars().all()
+
+        volumes_snapshot = []
+        for vol in all_volumes:
+            vol_data = {
+                "volume_number": vol.volume_number,
+                "title": vol.title,
+                "characters": vol.characters or [],
+                "relationships": vol.relationships or [],
+                "world_setting": vol.world_setting or {},
+                "is_current": False
+            }
+            # 标注当前章节所属的卷
+            if chapter.volume_id and vol.id == chapter.volume_id:
+                vol_data["is_current"] = True
+            volumes_snapshot.append(vol_data)
+
         summary = await llm_service.get_summary(
             selected.content,
             temperature=0.15,
             user_id=current_user.id,
             timeout=180.0,
+            blueprint_dict=blueprint_dict,
+            volumes_snapshot=volumes_snapshot,
         )
         chapter.real_summary = remove_think_tags(summary)
         await session.commit()
@@ -1072,11 +1134,40 @@ async def edit_chapter(
     logger.info("用户 %s 更新了项目 %s 第 %s 章内容", current_user.id, project_id, request.chapter_number)
 
     if request.content.strip():
+        # 🔥 获取 blueprint 和分卷快照，用于生成摘要
+        project_schema = await novel_service._serialize_project(project)
+        blueprint_dict = project_schema.blueprint.model_dump()
+
+        # 🔥 获取所有分卷的快照数据，并标注当前卷
+        from sqlalchemy import select
+        from ...models.novel import Volume
+
+        volumes_stmt = select(Volume).where(Volume.project_id == project_id).order_by(Volume.volume_number)
+        volumes_result = await session.execute(volumes_stmt)
+        all_volumes = volumes_result.scalars().all()
+
+        volumes_snapshot = []
+        for vol in all_volumes:
+            vol_data = {
+                "volume_number": vol.volume_number,
+                "title": vol.title,
+                "characters": vol.characters or [],
+                "relationships": vol.relationships or [],
+                "world_setting": vol.world_setting or {},
+                "is_current": False
+            }
+            # 标注当前章节所属的卷
+            if chapter.volume_id and vol.id == chapter.volume_id:
+                vol_data["is_current"] = True
+            volumes_snapshot.append(vol_data)
+
         summary = await llm_service.get_summary(
             request.content,
             temperature=0.15,
             user_id=current_user.id,
             timeout=180.0,
+            blueprint_dict=blueprint_dict,
+            volumes_snapshot=volumes_snapshot,
         )
         chapter.real_summary = remove_think_tags(summary)
     await session.commit()

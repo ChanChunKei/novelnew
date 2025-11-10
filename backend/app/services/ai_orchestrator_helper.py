@@ -153,10 +153,12 @@ async def generate_summary(
     system_prompt: Optional[str] = None,
     temperature: float = 0.15,
     timeout: float = 180.0,
+    blueprint_dict: Optional[dict] = None,
+    volumes_snapshot: Optional[list] = None,
 ) -> str:
     """
     生成章节摘要
-    
+
     替代原来的:
         summary = await llm_service.get_summary(
             chapter_content=content,
@@ -164,26 +166,43 @@ async def generate_summary(
             user_id=user_id,
             timeout=180.0
         )
-    
+
     改为:
         summary = await generate_summary(
             db_session=db,
             chapter_content=content,
             user_id=user_id,
+            blueprint_dict=blueprint_dict,
+            volumes_snapshot=volumes_snapshot,
         )
     """
+    import json
+
     if not system_prompt:
         from ..services.prompt_service import PromptService
         prompt_service = PromptService(db_session)
         system_prompt = await prompt_service.get_prompt("extraction")
         if not system_prompt:
             raise ValueError("未配置摘要提示词")
-    
+
+    # 🔥 构建与章节评估一致的上下文
+    context_payload = {
+        "chapter_content": chapter_content
+    }
+
+    if blueprint_dict:
+        context_payload["novel_blueprint"] = blueprint_dict
+
+    if volumes_snapshot:
+        context_payload["volumes_snapshot"] = volumes_snapshot
+
+    user_content = json.dumps(context_payload, ensure_ascii=False)
+
     return await call_ai_function(
         db_session=db_session,
         function=AIFunctionType.SUMMARY_EXTRACTION,
         system_prompt=system_prompt,
-        user_prompt=chapter_content,
+        user_prompt=user_content,
         temperature=temperature,
         timeout=timeout,
         user_id=user_id,
@@ -371,6 +390,8 @@ class OrchestratorWrapper:
         user_id: Optional[int] = None,
         timeout: float = 180.0,
         system_prompt: Optional[str] = None,
+        blueprint_dict: Optional[dict] = None,
+        volumes_snapshot: Optional[list] = None,
     ) -> str:
         """兼容原有的get_summary接口"""
         return await generate_summary(
@@ -380,6 +401,8 @@ class OrchestratorWrapper:
             system_prompt=system_prompt,
             temperature=temperature,
             timeout=timeout,
+            blueprint_dict=blueprint_dict,
+            volumes_snapshot=volumes_snapshot,
         )
     
     # 其他方法直接委托给原始LLMService
