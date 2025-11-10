@@ -7,8 +7,9 @@
       <h3 class="text-sm font-semibold text-blue-900 mb-2">📖 配置说明</h3>
       <ul class="text-xs text-blue-800 space-y-1">
         <li>• 配置 <strong>4个路由槽位</strong>，每个路由可以设置不同的 API 地址、Key 和模型</li>
-        <li>• <strong>11个AI功能</strong> 可以自由选择使用哪个路由</li>
+        <li>• <strong>13个AI功能</strong> 可以自由选择使用哪个路由</li>
         <li>• 灵活配置，支持多个 API 提供商（OpenAI、SiliconFlow、Gemini 等）</li>
+        <li>• 💡 建议：评估功能用便宜模型（如DeepSeek），生成功能用高级模型（如GPT-4）</li>
       </ul>
     </div>
 
@@ -291,6 +292,8 @@ const aiFunctions = ref<AIFunction[]>([
   { key: 'chapter_content_writing', name: '章节生成', routeIndex: 0 },
   { key: 'summary_extraction', name: '章节摘要', routeIndex: 0 },
   { key: 'outline_generation', name: '大纲生成', routeIndex: 0 },
+  { key: 'outline_evaluation', name: '大纲评估', routeIndex: 0 },
+  { key: 'chapter_evaluation', name: '章节评估', routeIndex: 0 },
   { key: 'basic_analysis', name: '基础分析', routeIndex: 0 },
   { key: 'enhanced_analysis', name: '增强分析', routeIndex: 0 },
   { key: 'character_tracking', name: '角色追踪', routeIndex: 0 },

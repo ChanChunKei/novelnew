@@ -499,12 +499,17 @@ async def evaluate_chapter(
         },
     }
 
-    evaluation_raw = await llm_service.get_llm_response(
+    # 使用AI Orchestrator的路由系统进行评估
+    from ...services.ai_orchestrator_helper import call_ai_function
+    from ...config.ai_function_config import AIFunctionType
+
+    evaluation_raw = await call_ai_function(
+        db_session=session,
+        function=AIFunctionType.CHAPTER_EVALUATION,
         system_prompt=evaluator_prompt,
-        conversation_history=[{"role": "user", "content": json.dumps(evaluator_payload, ensure_ascii=False)}],
-        temperature=0.3,
+        user_prompt=json.dumps(evaluator_payload, ensure_ascii=False),
         user_id=current_user.id,
-        timeout=360.0,
+        response_format="json_object",
     )
     evaluation_clean = remove_think_tags(evaluation_raw)
     await novel_service.add_chapter_evaluation(chapter, None, evaluation_clean)
@@ -584,16 +589,17 @@ async def evaluate_outline_versions(
             ]
         }
 
-        # 3. 调用AI评估
-        evaluation_response = await llm_service.get_llm_response(
+        # 3. 调用AI评估（使用AI Orchestrator的路由系统）
+        from ...services.ai_orchestrator_helper import call_ai_function
+        from ...config.ai_function_config import AIFunctionType
+
+        evaluation_response = await call_ai_function(
+            db_session=llm_service.db_session,
+            function=AIFunctionType.OUTLINE_EVALUATION,
             system_prompt=evaluator_prompt_content,
-            conversation_history=[{
-                "role": "user",
-                "content": json.dumps(evaluator_payload, ensure_ascii=False)
-            }],
-            temperature=0.3,  # 低温度，确保评估客观
+            user_prompt=json.dumps(evaluator_payload, ensure_ascii=False),
             user_id=user_id,
-            timeout=300.0,
+            response_format="json_object",
         )
 
         evaluation_clean = unwrap_markdown_json(remove_think_tags(evaluation_response))
