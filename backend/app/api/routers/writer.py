@@ -455,13 +455,13 @@ async def evaluate_outline_versions(
     """
     try:
         # 1. 获取评估提示词
-        evaluator_prompt = await prompt_service.get_by_name("outline_evaluation")
+        evaluator_prompt_content = await prompt_service.get_prompt("outline_evaluation")
 
-        if not evaluator_prompt:
+        if not evaluator_prompt_content:
             # 降级：使用通用评估提示词
-            evaluator_prompt = await prompt_service.get_by_name("evaluation")
+            evaluator_prompt_content = await prompt_service.get_prompt("evaluation")
 
-        if not evaluator_prompt or not evaluator_prompt.content:
+        if not evaluator_prompt_content:
             logger.warning("缺少大纲评估提示词，默认选择第一个版本")
             return 0
 
@@ -500,7 +500,7 @@ async def evaluate_outline_versions(
 
         # 3. 调用AI评估
         evaluation_response = await llm_service.get_llm_response(
-            system_prompt=evaluator_prompt.content,
+            system_prompt=evaluator_prompt_content,
             conversation_history=[{
                 "role": "user",
                 "content": json.dumps(evaluator_payload, ensure_ascii=False)
