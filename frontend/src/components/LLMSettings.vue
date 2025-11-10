@@ -117,7 +117,24 @@
 
     <!-- AI 功能路由分配 -->
     <div class="mb-6">
-      <h3 class="text-lg font-semibold text-gray-800 mb-4">🎯 AI 功能路由分配</h3>
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="text-lg font-semibold text-gray-800">🎯 AI 功能路由分配</h3>
+        <div class="flex gap-2">
+          <span class="text-sm text-gray-600 mr-2">一键切换至：</span>
+          <button
+            v-for="index in 4"
+            :key="index"
+            @click="switchAllToRoute(index - 1)"
+            class="text-xs px-3 py-1 rounded transition-colors"
+            :class="routes[index - 1].enabled
+              ? 'bg-indigo-100 text-indigo-700 hover:bg-indigo-200'
+              : 'bg-gray-100 text-gray-400 cursor-not-allowed'"
+            :disabled="!routes[index - 1].enabled"
+          >
+            路由{{ index }}
+          </button>
+        </div>
+      </div>
       <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
         <div
           v-for="func in aiFunctions"
@@ -138,6 +155,84 @@
           </div>
           <div class="mt-1 text-xs text-gray-500">
             {{ getRouteInfo(func.routeIndex) }}
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 混合生成配置 -->
+    <div class="mb-6">
+      <h3 class="text-lg font-semibold text-gray-800 mb-4">🎨 混合生成模式</h3>
+      <div class="p-4 bg-purple-50 border border-purple-200 rounded-lg">
+        <div class="flex items-center justify-between mb-4">
+          <div>
+            <div class="font-medium text-gray-800">启用混合生成</div>
+            <div class="text-xs text-gray-600 mt-1">
+              多版本生成时，每个版本使用不同的AI路由，获得更多样化的结果
+            </div>
+          </div>
+          <label class="flex items-center cursor-pointer">
+            <input
+              type="checkbox"
+              v-model="mixedGeneration.enabled"
+              class="w-5 h-5 text-purple-600 rounded focus:ring-purple-500"
+            >
+          </label>
+        </div>
+
+        <div v-if="mixedGeneration.enabled" class="space-y-4">
+          <!-- 大纲混合生成配置 -->
+          <div class="p-3 bg-white rounded-lg border border-purple-100">
+            <div class="font-medium text-sm text-gray-700 mb-2">📝 大纲生成路由分配</div>
+            <div class="grid grid-cols-5 gap-2">
+              <div
+                v-for="versionIndex in 5"
+                :key="'outline-' + versionIndex"
+                class="flex flex-col items-center"
+              >
+                <span class="text-xs text-gray-500 mb-1">版本{{ versionIndex }}</span>
+                <select
+                  v-model="mixedGeneration.outline[versionIndex - 1]"
+                  class="text-xs px-2 py-1 border border-gray-300 rounded focus:outline-none focus:ring-purple-500 focus:border-purple-500 w-full"
+                >
+                  <option :value="0">路由1</option>
+                  <option :value="1">路由2</option>
+                  <option :value="2">路由3</option>
+                  <option :value="3">路由4</option>
+                  <option :value="-1">随机</option>
+                </select>
+              </div>
+            </div>
+            <div class="text-xs text-gray-500 mt-2">
+              💡 提示：如果只生成2个版本，只有前2个路由配置会被使用
+            </div>
+          </div>
+
+          <!-- 章节混合生成配置 -->
+          <div class="p-3 bg-white rounded-lg border border-purple-100">
+            <div class="font-medium text-sm text-gray-700 mb-2">📖 章节生成路由分配</div>
+            <div class="grid grid-cols-5 gap-2">
+              <div
+                v-for="versionIndex in 5"
+                :key="'chapter-' + versionIndex"
+                class="flex flex-col items-center"
+              >
+                <span class="text-xs text-gray-500 mb-1">版本{{ versionIndex }}</span>
+                <select
+                  v-model="mixedGeneration.chapter[versionIndex - 1]"
+                  class="text-xs px-2 py-1 border border-gray-300 rounded focus:outline-none focus:ring-purple-500 focus:border-purple-500 w-full"
+                >
+                  <option :value="0">路由1</option>
+                  <option :value="1">路由2</option>
+                  <option :value="2">路由3</option>
+                  <option :value="3">路由4</option>
+                  <option :value="-1">随机</option>
+                </select>
+              </div>
+            </div>
+            <div class="text-xs text-gray-500 mt-2">
+              💡 提示：选择"随机"会从所有已启用的路由中随机选择
+            </div>
           </div>
         </div>
       </div>
@@ -204,6 +299,13 @@ const aiFunctions = ref<AIFunction[]>([
   { key: 'ai_denoising', name: 'AI去味', routeIndex: 0 },
 ]);
 
+// 混合生成配置
+const mixedGeneration = ref({
+  enabled: false,
+  outline: [0, 1, 2, 0, 1],  // 默认：前3个版本用不同路由，后2个循环使用
+  chapter: [0, 1, 0, 1, 2],  // 默认：版本1用路由1，版本2用路由2，以此类推
+});
+
 // 预设配置
 const presets: Record<string, { url: string; model: string }> = {
   siliconflow: {
@@ -235,6 +337,9 @@ onMounted(async () => {
         }
         if (parsed.functions && Array.isArray(parsed.functions)) {
           aiFunctions.value = parsed.functions;
+        }
+        if (parsed.mixedGeneration) {
+          mixedGeneration.value = parsed.mixedGeneration;
         }
       } catch (error) {
         console.log('解析配置失败，使用默认值');
@@ -273,6 +378,24 @@ const getRouteInfo = (routeIndex: number): string => {
   return `✅ ${route.model || '未设置模型'}`;
 };
 
+const switchAllToRoute = (routeIndex: number) => {
+  const route = routes.value[routeIndex];
+  if (!route.enabled) {
+    alert('❌ 该路由未启用，无法切换！');
+    return;
+  }
+  if (!route.url || !route.apiKey || !route.model) {
+    alert('⚠️ 该路由配置不完整，请先完成配置！');
+    return;
+  }
+
+  aiFunctions.value.forEach(func => {
+    func.routeIndex = routeIndex;
+  });
+
+  alert(`✅ 已将所有AI功能切换到路由${routeIndex + 1}！\n\n记得点击"保存配置"按钮。`);
+};
+
 const handleSave = async () => {
   try {
     // 验证至少有一个路由启用
@@ -297,6 +420,7 @@ const handleSave = async () => {
     const configJson = JSON.stringify({
       routes: routes.value,
       functions: aiFunctions.value,
+      mixedGeneration: mixedGeneration.value,
     });
 
     await createOrUpdateLLMConfig({
@@ -322,6 +446,11 @@ const handleReset = () => {
     aiFunctions.value.forEach(func => {
       func.routeIndex = 0;
     });
+    mixedGeneration.value = {
+      enabled: false,
+      outline: [0, 1, 2, 0, 1],
+      chapter: [0, 1, 0, 1, 2],
+    };
     alert('✅ 已重置为默认配置！记得点击"保存配置"按钮。');
   }
 };
