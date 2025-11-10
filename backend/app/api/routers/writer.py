@@ -261,8 +261,42 @@ async def generate_chapter(
 
     writing_notes = request.writing_notes or "无额外写作指令"
 
+    # 🔥 获取所有分卷的快照数据，并标注当前卷
+    from sqlalchemy import select
+    from ...models.novel import Volume
+
+    volumes_stmt = select(Volume).where(Volume.project_id == project_id).order_by(Volume.volume_number)
+    volumes_result = await session.execute(volumes_stmt)
+    all_volumes = volumes_result.scalars().all()
+
+    current_volume_number = None
+    volumes_snapshot = []
+    for vol in all_volumes:
+        vol_data = {
+            "volume_number": vol.volume_number,
+            "title": vol.title,
+            "characters": vol.characters or [],
+            "relationships": vol.relationships or [],
+            "world_setting": vol.world_setting or {},
+            "is_current": False
+        }
+        # 标注当前章节所属的卷
+        if outline.volume_id and vol.id == outline.volume_id:
+            vol_data["is_current"] = True
+            current_volume_number = vol.volume_number
+        volumes_snapshot.append(vol_data)
+
+    # 构建分卷快照文本
+    volumes_snapshot_text = ""
+    if volumes_snapshot:
+        volumes_snapshot_text = json.dumps(volumes_snapshot, ensure_ascii=False, indent=2)
+        logger.info(f"第 {request.chapter_number} 章：传递 {len(volumes_snapshot)} 个卷的快照数据，当前卷为第 {current_volume_number} 卷")
+    else:
+        volumes_snapshot_text = "暂无分卷快照数据（使用蓝图初始设定）"
+
     prompt_sections = [
         ("[世界蓝图](JSON)", blueprint_text),
+        ("[所有分卷快照数据](JSON) - is_current=true 表示当前卷", volumes_snapshot_text),
         ("[所有章节摘要]", all_summaries_text),
         ("[前两章完整内容]", previous_chapters_text),
         (
@@ -490,9 +524,38 @@ async def evaluate_chapter(
         {"version_id": idx + 1, "content": version.content}
         for idx, version in enumerate(sorted(chapter.versions, key=lambda item: item.created_at))
     ]
+
+    # 🔥 获取所有分卷的快照数据，并标注当前卷
+    from sqlalchemy import select
+    from ...models.novel import Volume
+
+    volumes_stmt = select(Volume).where(Volume.project_id == project_id).order_by(Volume.volume_number)
+    volumes_result = await session.execute(volumes_stmt)
+    all_volumes = volumes_result.scalars().all()
+
+    current_volume_number = None
+    volumes_snapshot = []
+    for vol in all_volumes:
+        vol_data = {
+            "volume_number": vol.volume_number,
+            "title": vol.title,
+            "characters": vol.characters or [],
+            "relationships": vol.relationships or [],
+            "world_setting": vol.world_setting or {},
+            "is_current": False
+        }
+        # 标注当前章节所属的卷
+        if chapter.volume_id and vol.id == chapter.volume_id:
+            vol_data["is_current"] = True
+            current_volume_number = vol.volume_number
+        volumes_snapshot.append(vol_data)
+
+    logger.info(f"章节评估：第 {chapter.chapter_number} 章，传递 {len(volumes_snapshot)} 个卷的快照数据，当前卷为第 {current_volume_number} 卷")
+
     # print("blueprint_dict:",blueprint_dict)
     evaluator_payload = {
         "novel_blueprint": blueprint_dict,
+        "volumes_snapshot": volumes_snapshot,
         "content_to_evaluate": {
             "chapter_number": chapter.chapter_number,
             "versions": versions_to_evaluate,
@@ -526,7 +589,8 @@ async def evaluate_outline_versions(
     user_id: int,
     completed_chapters: list = None,
     previous_two_chapters: list = None,
-    start_chapter: int = None
+    start_chapter: int = None,
+    volumes_data: list = None
 ) -> int:
     """
     AI评估多个大纲版本，返回最佳版本的索引
@@ -540,6 +604,7 @@ async def evaluate_outline_versions(
         completed_chapters: 已完成章节摘要列表
         previous_two_chapters: 前两章完整内容
         start_chapter: 新大纲起始章节号
+        volumes_data: 所有分卷的快照数据
 
     Returns:
         最佳版本的索引（0-based）
@@ -568,8 +633,27 @@ async def evaluate_outline_versions(
             }
             versions_to_evaluate.append(version_info)
 
+        # 🔥 传递所有卷的快照数据，并标注即将生成的新卷
+        volumes_snapshot = []
+        new_volume_number = 1
+        if volumes_data and len(volumes_data) > 0:
+            new_volume_number = len(volumes_data) + 1
+            for vol in volumes_data:
+                vol_snapshot = {
+                    "volume_number": vol.get("volume_number"),
+                    "title": vol.get("title", ""),
+                    "characters": vol.get("characters", []),
+                    "relationships": vol.get("relationships", []),
+                    "world_setting": vol.get("world_setting", {}),
+                    "is_current": False
+                }
+                volumes_snapshot.append(vol_snapshot)
+            logger.info(f"大纲评估：传递 {len(volumes_snapshot)} 个已有卷的快照数据，即将生成第 {new_volume_number} 卷")
+
         evaluator_payload = {
             "novel_blueprint": blueprint_dict,
+            "volumes_snapshot": volumes_snapshot,
+            "new_volume_number": new_volume_number,
             "completed_chapters": completed_chapters or [],
             "previous_chapters_content": previous_two_chapters or [],
             "generation_context": {
@@ -808,7 +892,8 @@ async def generate_chapter_outline(
             user_id=current_user.id,
             completed_chapters=completed_chapters,
             previous_two_chapters=previous_two_chapters,
-            start_chapter=request.start_chapter
+            start_chapter=request.start_chapter,
+            volumes_data=volumes_data
         )
         data = outline_versions[best_version_idx]["data"]
         logger.info(f"项目 {project_id} AI选择了版本 {best_version_idx + 1} 作为最佳大纲")
