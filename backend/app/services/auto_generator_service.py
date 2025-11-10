@@ -1137,7 +1137,8 @@ class AutoGeneratorService:
         prompt_service: PromptService,
         completed_chapters: list = None,
         previous_two_chapters: list = None,
-        start_chapter: int = None
+        start_chapter: int = None,
+        volumes_data: list = None
     ) -> int:
         """
         AI评估多个大纲版本，返回最佳版本的索引
@@ -1152,6 +1153,7 @@ class AutoGeneratorService:
             completed_chapters: 已完成章节摘要列表
             previous_two_chapters: 前两章完整内容
             start_chapter: 新大纲起始章节号
+            volumes_data: 所有分卷的快照数据
 
         Returns:
             最佳版本的索引（0-based）
@@ -1181,8 +1183,28 @@ class AutoGeneratorService:
                 }
                 versions_to_evaluate.append(version_info)
 
+            # 🔥 传递所有卷的快照数据，并标注即将生成的新卷
+            volumes_snapshot = []
+            new_volume_number = 1
+            if volumes_data and len(volumes_data) > 0:
+                new_volume_number = len(volumes_data) + 1
+                for vol in volumes_data:
+                    vol_snapshot = {
+                        "volume_number": vol.get("volume_number"),
+                        "title": vol.get("title", ""),
+                        "characters": vol.get("characters", []),
+                        "relationships": vol.get("relationships", []),
+                        "world_setting": vol.get("world_setting", {}),
+                        "is_current": False
+                    }
+                    volumes_snapshot.append(vol_snapshot)
+                logger.info(f"大纲评估：传递 {len(volumes_snapshot)} 个已有卷的快照数据，即将生成第 {new_volume_number} 卷")
+                await cls._log(db, task.id, "info", f"传递 {len(volumes_snapshot)} 个已有卷的快照数据，即将生成第 {new_volume_number} 卷")
+
             evaluator_payload = {
                 "novel_blueprint": blueprint_dict,
+                "volumes_snapshot": volumes_snapshot,
+                "new_volume_number": new_volume_number,
                 "completed_chapters": completed_chapters or [],
                 "previous_chapters_content": previous_two_chapters or [],
                 "generation_context": {
@@ -1482,7 +1504,8 @@ class AutoGeneratorService:
                 prompt_service=prompt_service,
                 completed_chapters=completed_summaries,
                 previous_two_chapters=previous_two_chapters,
-                start_chapter=start_chapter
+                start_chapter=start_chapter,
+                volumes_data=volumes_data
             )
 
             data = outline_versions[best_version_idx]["data"]
