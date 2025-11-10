@@ -1921,70 +1921,24 @@ class AutoGeneratorService:
             is_current = (vol.id == current_volume_id)
             vol_data = {
                 "volume_number": vol.volume_number,
-                "title": f"{vol.title}（当前分卷）" if is_current else vol.title,
+                "title": vol.title,
                 "characters": vol.characters or [],
                 "relationships": vol.relationships or [],
-                "world_setting": vol.world_setting or {}
+                "world_setting": vol.world_setting or {},
+                "is_current": is_current  # 🔥 标注当前卷
             }
             volumes_snapshot.append(vol_data)
 
-        blueprint_dict["volumes_snapshot"] = volumes_snapshot
+        # 🔥 不再把 volumes_snapshot 放到 blueprint_dict 中，而是作为单独参数传递
 
-        # 4. 收集所有已完成章节的摘要
-        result = await db.execute(
-            select(Chapter)
-            .where(
-                Chapter.project_id == task.project_id,
-                Chapter.chapter_number < chapter.chapter_number,
-                Chapter.real_summary.isnot(None)
-            )
-            .order_by(Chapter.chapter_number)
-        )
-        completed_chapters = result.scalars().all()
-
-        all_summaries_lines = []
-        for ch in completed_chapters:
-            ch_outline = outlines_map.get(ch.chapter_number)
-            title = ch_outline.title if ch_outline else f"第{ch.chapter_number}章"
-            all_summaries_lines.append(
-                f"- 第{ch.chapter_number}章 - {title}: {ch.real_summary}"
-            )
-        all_summaries_text = "\n".join(all_summaries_lines) if all_summaries_lines else "暂无已完成章节"
-
-        # 5. 获取上一章的完整内容（只要1章，不是2章）
-        previous_chapter_text = "暂无前序章节"
-        if chapter.chapter_number > 1:
-            result = await db.execute(
-                select(Chapter)
-                .where(
-                    Chapter.project_id == task.project_id,
-                    Chapter.chapter_number == chapter.chapter_number - 1
-                )
-                .options(selectinload(Chapter.selected_version))
-            )
-            prev_chapter = result.scalar_one_or_none()
-
-            if prev_chapter and prev_chapter.selected_version:
-                prev_outline = outlines_map.get(prev_chapter.chapter_number)
-                prev_title = prev_outline.title if prev_outline else f"第{prev_chapter.chapter_number}章"
-                previous_chapter_text = f"### 第{prev_chapter.chapter_number}章 - {prev_title}\n{prev_chapter.selected_version.content}"
-
-        # 6. 构建完整上下文
-        blueprint_text = json.dumps(blueprint_dict, ensure_ascii=False, indent=2)
-
-        prompt_sections = [
-            ("[世界蓝图](JSON)", blueprint_text),
-            ("[所有章节摘要]", all_summaries_text),
-            ("[上一章完整内容]", previous_chapter_text),
-            ("[本章内容]", content),
-        ]
-        enhanced_context = "\n\n".join(f"{title}\n{content}" for title, content in prompt_sections if content)
-
+        # 🔥 现在不再构建 enhanced_context，改为传递结构化参数
         summary = await generate_summary(
             db_session=db,
             system_prompt=system_prompt,
-            chapter_content=enhanced_context,  # ✅ 传递完整上下文
+            chapter_content=content,  # 🔥 只传递章节内容
             user_id=task.user_id,
+            blueprint_dict=blueprint_dict,  # 🔥 单独传递蓝图
+            volumes_snapshot=volumes_snapshot,  # 🔥 单独传递分卷快照
         )
 
         logger.info(

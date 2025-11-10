@@ -301,6 +301,8 @@ class LLMService:
         user_id: Optional[int] = None,
         timeout: float = 180.0,
         system_prompt: Optional[str] = None,
+        blueprint_dict: Optional[dict] = None,
+        volumes_snapshot: Optional[list] = None,
     ) -> str:
         if not system_prompt:
             prompt_service = PromptService(self.session)
@@ -308,9 +310,24 @@ class LLMService:
         if not system_prompt:
             logger.error("未配置名为 'extraction' 的摘要提示词，无法生成章节摘要")
             raise HTTPException(status_code=500, detail="未配置摘要提示词，请联系管理员配置 'extraction' 提示词")
+
+        # 🔥 构建与章节评估一致的上下文
+        import json
+        context_payload = {
+            "chapter_content": chapter_content
+        }
+
+        if blueprint_dict:
+            context_payload["novel_blueprint"] = blueprint_dict
+
+        if volumes_snapshot:
+            context_payload["volumes_snapshot"] = volumes_snapshot
+
+        user_content = json.dumps(context_payload, ensure_ascii=False)
+
         messages = [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": chapter_content},
+            {"role": "user", "content": user_content},
         ]
         return await self._stream_and_collect(messages, temperature=temperature, user_id=user_id, timeout=timeout)
 
