@@ -39,6 +39,51 @@ OUTLINE_REVIEWER_TEMPERATURE = 0.3  # 大纲审核Agent温度（严格客观）
 OUTLINE_DIALOGUE_TOTAL_TIMEOUT = 600.0  # 大纲生成总超时时间（10分钟）
 
 
+# ==================== Prompt读取辅助函数 ====================
+async def get_agent_prompt_from_db(
+    db_session: AsyncSession,
+    agent_type: str,
+    is_outline: bool = False
+) -> str:
+    """
+    从数据库读取Agent Prompt，如果不存在则使用代码中的默认值
+
+    Args:
+        db_session: 数据库会话
+        agent_type: Agent类型 ("planner", "writer", "reviewer", "summarizer")
+        is_outline: 是否是大纲Agent（True）还是章节Agent（False）
+
+    Returns:
+        Prompt内容
+    """
+    from ..services.prompt_service import PromptService
+
+    # 构建prompt名称
+    if is_outline:
+        prompt_name = f"outline_agent_{agent_type}"
+    else:
+        prompt_name = f"agent_{agent_type}"
+
+    # 尝试从数据库读取
+    try:
+        prompt_service = PromptService(db_session)
+        db_prompt = await prompt_service.get_prompt(prompt_name)
+        if db_prompt:
+            logger.debug(f"从数据库加载Prompt: {prompt_name}")
+            return db_prompt
+    except Exception as e:
+        logger.warning(f"从数据库读取Prompt失败: {prompt_name}, 错误: {e}")
+
+    # 回退到代码中的默认值
+    logger.debug(f"使用代码默认Prompt: {prompt_name}")
+    if is_outline:
+        from ..config.outline_agent_prompts import get_outline_agent_prompt
+        return get_outline_agent_prompt(agent_type)
+    else:
+        from ..config.agent_prompts import get_agent_prompt
+        return get_agent_prompt(agent_type)
+
+
 async def call_ai_function(
     db_session: AsyncSession,
     function: AIFunctionType,
@@ -1329,10 +1374,12 @@ async def _call_planner_agent(
     任务：分析大纲，决定查询什么，调用工具查询
     """
     from ..config.agent_tools import NOVEL_AGENT_TOOLS
-    from ..config.agent_prompts import get_agent_prompt
+
+    # 从数据库读取prompt
+    planner_prompt = await get_agent_prompt_from_db(llm_service.db_session, "planner", is_outline=False)
 
     messages = [
-        {"role": "system", "content": get_agent_prompt("planner")},
+        {"role": "system", "content": planner_prompt},
         {"role": "user", "content": user_prompt}
     ]
 
@@ -1411,10 +1458,12 @@ async def _call_writer_agent(
     任务：撰写章节内容
     """
     from ..config.agent_tools import NOVEL_AGENT_TOOLS
-    from ..config.agent_prompts import get_agent_prompt
+
+    # 从数据库读取prompt
+    writer_prompt = await get_agent_prompt_from_db(llm_service.db_session, "writer", is_outline=False)
 
     messages = [
-        {"role": "system", "content": get_agent_prompt("writer")},
+        {"role": "system", "content": writer_prompt},
         {"role": "user", "content": writer_context}
     ]
 
@@ -1488,10 +1537,11 @@ async def _call_reviewer_agent(
     上下文：写作内容 + 写作Agent的所有上下文
     任务：审核质量，返回通过/不通过 + 修改建议
     """
-    from ..config.agent_prompts import get_agent_prompt
+    # 从数据库读取prompt
+    reviewer_prompt = await get_agent_prompt_from_db(llm_service.db_session, "reviewer", is_outline=False)
 
     messages = [
-        {"role": "system", "content": get_agent_prompt("reviewer")},
+        {"role": "system", "content": reviewer_prompt},
         {"role": "user", "content": reviewer_context}
     ]
 
@@ -1544,10 +1594,11 @@ async def _call_summarizer_agent(
     上下文：对话历史 + 所有AI上下文 + 本章内容
     任务：生成精炼的章节摘要
     """
-    from ..config.agent_prompts import get_agent_prompt
+    # 从数据库读取prompt
+    summarizer_prompt = await get_agent_prompt_from_db(llm_service.db_session, "summarizer", is_outline=False)
 
     messages = [
-        {"role": "system", "content": get_agent_prompt("summarizer")},
+        {"role": "system", "content": summarizer_prompt},
         {"role": "user", "content": summarizer_context}
     ]
 
@@ -1992,10 +2043,11 @@ async def _call_outline_planner_agent(
     上下文：项目蓝图 + 已完成章节摘要 + 分卷信息
     任务：分析项目，规划章节结构和节奏
     """
-    from ..config.outline_agent_prompts import get_outline_agent_prompt
+    # 从数据库读取prompt
+    planner_prompt = await get_agent_prompt_from_db(llm_service.db_session, "planner", is_outline=True)
 
     messages = [
-        {"role": "system", "content": get_outline_agent_prompt("planner")},
+        {"role": "system", "content": planner_prompt},
         {"role": "user", "content": context}
     ]
 
@@ -2040,10 +2092,11 @@ async def _call_outline_writer_agent(
 
     任务：根据规划方案撰写详细的章节大纲（标题+摘要）
     """
-    from ..config.outline_agent_prompts import get_outline_agent_prompt
+    # 从数据库读取prompt
+    writer_prompt = await get_agent_prompt_from_db(llm_service.db_session, "writer", is_outline=True)
 
     messages = [
-        {"role": "system", "content": get_outline_agent_prompt("writer")},
+        {"role": "system", "content": writer_prompt},
         {"role": "user", "content": context}
     ]
 
@@ -2082,10 +2135,11 @@ async def _call_outline_reviewer_agent(
 
     任务：审核大纲质量，提供评分和修改建议
     """
-    from ..config.outline_agent_prompts import get_outline_agent_prompt
+    # 从数据库读取prompt
+    reviewer_prompt = await get_agent_prompt_from_db(llm_service.db_session, "reviewer", is_outline=True)
 
     messages = [
-        {"role": "system", "content": get_outline_agent_prompt("reviewer")},
+        {"role": "system", "content": reviewer_prompt},
         {"role": "user", "content": context}
     ]
 
