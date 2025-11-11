@@ -1439,6 +1439,13 @@ class AutoGeneratorService:
                 reviewer_temp = agent_config.get("agent_reviewer_temperature")
                 min_score = agent_config.get("agent_min_score")
                 max_iterations = agent_config.get("agent_max_iterations")
+                # ✅ 读取3Agent LLM配置
+                planner_provider = agent_config.get("agent_planner_provider")
+                planner_model = agent_config.get("agent_planner_model")
+                writer_provider = agent_config.get("agent_writer_provider")
+                writer_model = agent_config.get("agent_writer_model")
+                reviewer_provider = agent_config.get("agent_reviewer_provider")
+                reviewer_model = agent_config.get("agent_reviewer_model")
 
                 result = await generate_outline_with_agents(
                     db_session=db,
@@ -1454,6 +1461,12 @@ class AutoGeneratorService:
                     reviewer_temperature=reviewer_temp,
                     min_score=min_score,
                     max_iterations=max_iterations,
+                    planner_provider=planner_provider,
+                    planner_model=planner_model,
+                    writer_provider=writer_provider,
+                    writer_model=writer_model,
+                    reviewer_provider=reviewer_provider,
+                    reviewer_model=reviewer_model,
                 )
 
                 # 从result中提取章节数据和元数据

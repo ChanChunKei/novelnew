@@ -1683,6 +1683,12 @@ async def generate_outline_with_agents(
     reviewer_temperature: Optional[float] = None,
     min_score: Optional[int] = None,
     max_iterations: Optional[int] = None,
+    planner_provider: Optional[str] = None,
+    planner_model: Optional[str] = None,
+    writer_provider: Optional[str] = None,
+    writer_model: Optional[str] = None,
+    reviewer_provider: Optional[str] = None,
+    reviewer_model: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     使用3Agent对话模式生成大纲（带总体超时控制）
@@ -1740,6 +1746,12 @@ async def generate_outline_with_agents(
                 reviewer_temperature=reviewer_temperature,
                 min_score=min_score,
                 max_iterations=max_iterations,
+                planner_provider=planner_provider,
+                planner_model=planner_model,
+                writer_provider=writer_provider,
+                writer_model=writer_model,
+                reviewer_provider=reviewer_provider,
+                reviewer_model=reviewer_model,
             ),
             timeout=OUTLINE_DIALOGUE_TOTAL_TIMEOUT
         )
@@ -1765,6 +1777,12 @@ async def _generate_outline_with_agents_impl(
     reviewer_temperature: Optional[float] = None,
     min_score: Optional[int] = None,
     max_iterations: Optional[int] = None,
+    planner_provider: Optional[str] = None,
+    planner_model: Optional[str] = None,
+    writer_provider: Optional[str] = None,
+    writer_model: Optional[str] = None,
+    reviewer_provider: Optional[str] = None,
+    reviewer_model: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     三Agent对话模式生成大纲（实际实现）
@@ -1779,8 +1797,8 @@ async def _generate_outline_with_agents_impl(
 
     llm_service = LLMService(db_session)
     config = get_function_config(AIFunctionType.OUTLINE_GENERATION)
-    provider = config.primary.provider
-    model = config.primary.model
+    default_provider = config.primary.provider
+    default_model = config.primary.model
 
     # ✅ 使用自定义配置或默认值
     planner_temp = planner_temperature if planner_temperature is not None else OUTLINE_PLANNER_TEMPERATURE
@@ -1789,8 +1807,19 @@ async def _generate_outline_with_agents_impl(
     min_score_threshold = min_score if min_score is not None else MIN_OUTLINE_SCORE
     max_rewrite_iterations = max_iterations if max_iterations is not None else MAX_OUTLINE_ITERATIONS
 
+    # ✅ 设置每个Agent的LLM配置
+    planner_llm_provider = planner_provider if planner_provider else default_provider
+    planner_llm_model = planner_model if planner_model else default_model
+    writer_llm_provider = writer_provider if writer_provider else default_provider
+    writer_llm_model = writer_model if writer_model else default_model
+    reviewer_llm_provider = reviewer_provider if reviewer_provider else default_provider
+    reviewer_llm_model = reviewer_model if reviewer_model else default_model
+
     logger.info(f"配置参数: planner_temp={planner_temp}, writer_temp={writer_temp}, "
                 f"reviewer_temp={reviewer_temp}, min_score={min_score_threshold}, max_iterations={max_rewrite_iterations}")
+    logger.info(f"LLM配置: Planner={planner_llm_provider}/{planner_llm_model}, "
+                f"Writer={writer_llm_provider}/{writer_llm_model}, "
+                f"Reviewer={reviewer_llm_provider}/{reviewer_llm_model}")
 
     # 对话历史（记录所有Agent的交互）
     conversation_history = []
@@ -1809,8 +1838,8 @@ async def _generate_outline_with_agents_impl(
 
     planner_result = await _call_outline_planner_agent(
         llm_service=llm_service,
-        provider=provider,
-        model=model,
+        provider=planner_llm_provider,
+        model=planner_llm_model,
         context=context,
         user_id=user_id,
         timeout=120.0,
@@ -1845,8 +1874,8 @@ async def _generate_outline_with_agents_impl(
 
         writer_result = await _call_outline_writer_agent(
             llm_service=llm_service,
-            provider=provider,
-            model=model,
+            provider=writer_llm_provider,
+            model=writer_llm_model,
             context=writer_context,
             user_id=user_id,
             timeout=180.0,
@@ -1875,8 +1904,8 @@ async def _generate_outline_with_agents_impl(
 
         reviewer_result = await _call_outline_reviewer_agent(
             llm_service=llm_service,
-            provider=provider,
-            model=model,
+            provider=reviewer_llm_provider,
+            model=reviewer_llm_model,
             context=reviewer_context,
             user_id=user_id,
             timeout=120.0,
