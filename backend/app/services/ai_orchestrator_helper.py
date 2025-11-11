@@ -2116,8 +2116,13 @@ def _build_outline_writer_context(
         f"## 项目分析",
         planner_result.get("analysis", ""),
         "",
+        f"## 卷名建议",
+        f"建议卷名：{planner_result.get('volume_title_suggestion', '未提供')}",
+        f"核心主题：{planner_result.get('volume_theme', '未提供')}",
+        "",
         f"## 章节规划",
         f"总章节数：{planner_result.get('chapter_plan', {}).get('total_chapters', 50)}",
+        f"本批生成：{planner_result.get('chapter_plan', {}).get('chapters_to_generate', 30)}章",
         f"结构：{planner_result.get('chapter_plan', {}).get('structure', '线性')}",
         "",
         f"## 关键节点",
@@ -2125,6 +2130,36 @@ def _build_outline_writer_context(
 
     for point in planner_result.get("chapter_plan", {}).get("key_points", []):
         context_parts.append(f"- {point}")
+
+    # 添加世界观扩展
+    world_expansion = planner_result.get("world_expansion", {})
+    if world_expansion:
+        context_parts.extend([
+            "",
+            f"## 世界观扩展",
+        ])
+        if world_expansion.get("new_locations"):
+            context_parts.append(f"新地点：{', '.join(world_expansion.get('new_locations', []))}")
+        if world_expansion.get("new_forces"):
+            context_parts.append(f"新势力：{', '.join(world_expansion.get('new_forces', []))}")
+        if world_expansion.get("new_concepts"):
+            context_parts.append(f"新概念：{', '.join(world_expansion.get('new_concepts', []))}")
+
+    # 添加角色发展
+    character_dev = planner_result.get("character_development", {})
+    if character_dev:
+        context_parts.extend([
+            "",
+            f"## 角色发展",
+        ])
+        if character_dev.get("main_characters"):
+            context_parts.append("主要角色：")
+            for char in character_dev.get("main_characters", []):
+                context_parts.append(f"- {char}")
+        if character_dev.get("new_characters"):
+            context_parts.append("新增角色：")
+            for char in character_dev.get("new_characters", []):
+                context_parts.append(f"- {char}")
 
     context_parts.extend([
         "",
