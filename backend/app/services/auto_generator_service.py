@@ -860,8 +860,22 @@ class AutoGeneratorService:
                 if isinstance(variant, dict):
                     # 优先提取full_content字段
                     if "full_content" in variant and variant["full_content"]:
-                        contents.append(variant["full_content"])
-                        logger.info(f"第 {next_chapter_number} 章版本 {idx+1}: 提取full_content，长度={len(variant['full_content'])}")
+                        full_content = variant["full_content"]
+
+                        # ✅ 防御性处理：检查full_content是否被错误地嵌套成JSON字符串
+                        if isinstance(full_content, str) and full_content.strip().startswith("{"):
+                            try:
+                                # 尝试解析，如果是JSON字符串，提取真正的内容
+                                nested = json.loads(full_content)
+                                if isinstance(nested, dict) and "full_content" in nested:
+                                    logger.warning(f"第 {next_chapter_number} 章版本 {idx+1}: 检测到嵌套JSON，自动提取")
+                                    full_content = nested["full_content"]
+                            except json.JSONDecodeError:
+                                # 不是JSON，保持原样
+                                pass
+
+                        contents.append(full_content)
+                        logger.info(f"第 {next_chapter_number} 章版本 {idx+1}: 提取full_content，长度={len(full_content)}")
                     elif "content" in variant and variant["content"]:
                         contents.append(variant["content"])
                         logger.info(f"第 {next_chapter_number} 章版本 {idx+1}: 提取content，长度={len(variant['content'])}")
