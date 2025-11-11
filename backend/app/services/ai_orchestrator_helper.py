@@ -32,10 +32,10 @@ AGENT_DIALOGUE_TOTAL_TIMEOUT = 600.0  # 三Agent对话总超时时间（10分钟
 
 # ==================== 三Agent大纲生成模式常量配置 ====================
 MAX_OUTLINE_ITERATIONS = 3  # 大纲最多重写次数
-MIN_OUTLINE_SCORE = 75  # 大纲审批通过最低分数
-OUTLINE_PLANNER_TEMPERATURE = 0.7  # 大纲规划Agent温度
-OUTLINE_WRITER_TEMPERATURE = 0.8  # 大纲撰写Agent温度
-OUTLINE_REVIEWER_TEMPERATURE = 0.3  # 大纲审核Agent温度
+MIN_OUTLINE_SCORE = 75  # 大纲审批通过最低分数（略低于章节的80分，因为大纲是规划阶段）
+OUTLINE_PLANNER_TEMPERATURE = 0.6  # 大纲规划Agent温度（更理性，专注于结构规划）
+OUTLINE_WRITER_TEMPERATURE = 0.9  # 大纲撰写Agent温度（更有创造性，同章节Writer）
+OUTLINE_REVIEWER_TEMPERATURE = 0.3  # 大纲审核Agent温度（严格客观）
 OUTLINE_DIALOGUE_TOTAL_TIMEOUT = 600.0  # 大纲生成总超时时间（10分钟）
 
 
@@ -1702,8 +1702,19 @@ async def generate_outline_with_agents(
         生成的大纲数据（Dict格式，包含chapters列表和metadata）
 
     Raises:
+        ValueError: 参数验证失败
         asyncio.TimeoutError: 如果总体超时
     """
+    # ✅ 参数验证
+    if not project_id:
+        raise ValueError("project_id不能为空")
+    if not isinstance(start_chapter, int) or start_chapter < 1:
+        raise ValueError(f"start_chapter必须是大于0的整数，当前值：{start_chapter}")
+    if not blueprint_dict:
+        raise ValueError("blueprint_dict不能为空，请先创建项目蓝图")
+    if not isinstance(user_id, int) or user_id < 1:
+        raise ValueError(f"user_id必须是大于0的整数，当前值：{user_id}")
+
     try:
         result = await asyncio.wait_for(
             _generate_outline_with_agents_impl(
@@ -1873,14 +1884,20 @@ async def _generate_outline_with_agents_impl(
     total_time = time.time() - start_time
     iterations = len([h for h in conversation_history if h["agent"] == "outline_writer"])
 
+    # ✅ 返回与传统模式兼容的完整数据结构
     result = {
+        "volume_title": final_outline.get("volume_title", ""),
         "chapters": final_outline.get("chapters", []),
+        "characters": final_outline.get("characters", []),
+        "relationships": final_outline.get("relationships", []),
+        "world_setting": final_outline.get("world_setting", {}),
         "metadata": {
             "conversation_history": conversation_history,
             "iterations": iterations,
             "final_score": final_score,
             "total_time": total_time,
             "planner_analysis": planner_result.get("analysis", ""),
+            "generation_mode": "agent_dialogue",  # 标记生成模式
         }
     }
 

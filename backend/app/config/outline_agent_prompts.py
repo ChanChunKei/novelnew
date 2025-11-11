@@ -63,6 +63,7 @@ OUTLINE_WRITER_PROMPT = """# 角色定义
 输出JSON格式的章节大纲：
 ```json
 {
+  "volume_title": "新的征程",
   "chapters": [
     {
       "chapter_number": 51,
@@ -75,10 +76,20 @@ OUTLINE_WRITER_PROMPT = """# 角色定义
       "summary": "张三在高人的山洞中疗伤，得知这位高人竟是当年的宗门叛徒。高人向他揭示了宗门隐藏的秘密，原来师父的死另有隐情。张三决定继续前往禁地调查。"
     }
   ],
-  "total": 50,
+  "characters": [],
+  "relationships": [],
+  "world_setting": {},
   "notes": "大纲创作说明：本批大纲着重描写张三离开宗门后的成长，为后续揭秘做铺垫。"
 }
 ```
+
+**必填字段**：
+- `volume_title`: 为这批章节起一个有文学性的卷名（5-10字）
+- `chapters`: 章节数组，建议20-50章，根据故事节奏自主决定
+- `characters`: 该卷涉及的角色快照（可以为空数组，由系统从已有数据继承）
+- `relationships`: 该卷涉及的关系快照（可以为空数组）
+- `world_setting`: 该卷涉及的世界观快照（可以为空对象）
+- `notes`: 创作说明
 
 # 写作要求
 - **标题简洁有力**：5-10字，能吸引读者，暗示本章内容

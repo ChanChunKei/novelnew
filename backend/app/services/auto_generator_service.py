@@ -1415,7 +1415,7 @@ class AutoGeneratorService:
         # ✅ 检查是否使用3Agent大纲生成模式
         generation_mode = task.generation_config.get("generation_mode", "basic")
 
-        if generation_mode == "three_agent":
+        if generation_mode == "agent_dialogue":
             # ========== 3Agent大纲生成模式 ==========
             await cls._log(
                 db,
@@ -1439,18 +1439,18 @@ class AutoGeneratorService:
                 )
 
                 # 从result中提取章节数据和元数据
-                data = {
-                    "chapters": result["chapters"],
-                    "metadata": result.get("metadata", {}),
-                }
+                # 保留完整的result数据（包含volume_title, characters等）
+                data = result.copy()
+                # metadata用于日志记录
+                metadata = result.get("metadata", {})
 
                 await cls._log(
                     db,
                     task.id,
                     "success",
                     f"3Agent模式生成成功：{len(data['chapters'])}章，"
-                    f"迭代{result['metadata']['iterations']}轮，"
-                    f"评分{result['metadata']['final_score']}"
+                    f"迭代{metadata.get('iterations', 0)}轮，"
+                    f"评分{metadata.get('final_score', 0)}"
                 )
 
             except Exception as e:
