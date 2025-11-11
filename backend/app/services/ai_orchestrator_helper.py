@@ -1678,6 +1678,11 @@ async def generate_outline_with_agents(
     completed_summaries: List[Dict[str, Any]],
     volumes_data: List[Dict[str, Any]],
     timeout: float = 600.0,
+    planner_temperature: Optional[float] = None,
+    writer_temperature: Optional[float] = None,
+    reviewer_temperature: Optional[float] = None,
+    min_score: Optional[int] = None,
+    max_iterations: Optional[int] = None,
 ) -> Dict[str, Any]:
     """
     使用3Agent对话模式生成大纲（带总体超时控制）
@@ -1697,6 +1702,11 @@ async def generate_outline_with_agents(
         completed_summaries: 已完成章节的摘要列表
         volumes_data: 分卷数据
         timeout: 超时时间（默认600秒）
+        planner_temperature: 规划Agent温度（默认使用OUTLINE_PLANNER_TEMPERATURE）
+        writer_temperature: 写作Agent温度（默认使用OUTLINE_WRITER_TEMPERATURE）
+        reviewer_temperature: 审批Agent温度（默认使用OUTLINE_REVIEWER_TEMPERATURE）
+        min_score: 最低通过分数（默认使用MIN_OUTLINE_SCORE）
+        max_iterations: 最大重写次数（默认使用MAX_OUTLINE_ITERATIONS）
 
     Returns:
         生成的大纲数据（Dict格式，包含chapters列表和metadata）
@@ -1725,6 +1735,11 @@ async def generate_outline_with_agents(
                 blueprint_dict=blueprint_dict,
                 completed_summaries=completed_summaries,
                 volumes_data=volumes_data,
+                planner_temperature=planner_temperature,
+                writer_temperature=writer_temperature,
+                reviewer_temperature=reviewer_temperature,
+                min_score=min_score,
+                max_iterations=max_iterations,
             ),
             timeout=OUTLINE_DIALOGUE_TOTAL_TIMEOUT
         )
@@ -1745,6 +1760,11 @@ async def _generate_outline_with_agents_impl(
     blueprint_dict: Dict[str, Any],
     completed_summaries: List[Dict[str, Any]],
     volumes_data: List[Dict[str, Any]],
+    planner_temperature: Optional[float] = None,
+    writer_temperature: Optional[float] = None,
+    reviewer_temperature: Optional[float] = None,
+    min_score: Optional[int] = None,
+    max_iterations: Optional[int] = None,
 ) -> Dict[str, Any]:
     """
     三Agent对话模式生成大纲（实际实现）
@@ -1761,6 +1781,16 @@ async def _generate_outline_with_agents_impl(
     config = get_function_config(AIFunctionType.OUTLINE_GENERATION)
     provider = config.primary.provider
     model = config.primary.model
+
+    # ✅ 使用自定义配置或默认值
+    planner_temp = planner_temperature if planner_temperature is not None else OUTLINE_PLANNER_TEMPERATURE
+    writer_temp = writer_temperature if writer_temperature is not None else OUTLINE_WRITER_TEMPERATURE
+    reviewer_temp = reviewer_temperature if reviewer_temperature is not None else OUTLINE_REVIEWER_TEMPERATURE
+    min_score_threshold = min_score if min_score is not None else MIN_OUTLINE_SCORE
+    max_rewrite_iterations = max_iterations if max_iterations is not None else MAX_OUTLINE_ITERATIONS
+
+    logger.info(f"配置参数: planner_temp={planner_temp}, writer_temp={writer_temp}, "
+                f"reviewer_temp={reviewer_temp}, min_score={min_score_threshold}, max_iterations={max_rewrite_iterations}")
 
     # 对话历史（记录所有Agent的交互）
     conversation_history = []
@@ -1784,6 +1814,7 @@ async def _generate_outline_with_agents_impl(
         context=context,
         user_id=user_id,
         timeout=120.0,
+        temperature=planner_temp,
     )
 
     logger.info(f"规划Agent完成，耗时: {time.time() - planner_start:.2f}秒")
@@ -1800,8 +1831,8 @@ async def _generate_outline_with_agents_impl(
     final_outline = None
     final_score = 0
 
-    for iteration in range(MAX_OUTLINE_ITERATIONS):
-        logger.info(f"--- 大纲写作迭代 {iteration + 1}/{MAX_OUTLINE_ITERATIONS} ---")
+    for iteration in range(max_rewrite_iterations):
+        logger.info(f"--- 大纲写作迭代 {iteration + 1}/{max_rewrite_iterations} ---")
 
         # 阶段2：写作Agent撰写大纲
         writer_start = time.time()
@@ -1819,6 +1850,7 @@ async def _generate_outline_with_agents_impl(
             context=writer_context,
             user_id=user_id,
             timeout=180.0,
+            temperature=writer_temp,
         )
 
         logger.info(f"写作Agent完成，耗时: {time.time() - writer_start:.2f}秒")
@@ -1848,6 +1880,7 @@ async def _generate_outline_with_agents_impl(
             context=reviewer_context,
             user_id=user_id,
             timeout=120.0,
+            temperature=reviewer_temp,
         )
 
         logger.info(f"审批Agent完成，耗时: {time.time() - reviewer_start:.2f}秒")
@@ -1863,16 +1896,16 @@ async def _generate_outline_with_agents_impl(
         score = reviewer_result.get("score", 0)
         final_score = score
 
-        if reviewer_result.get("approved", False) and score >= MIN_OUTLINE_SCORE:
-            logger.info(f"✅ 大纲审批通过！评分：{score}/{MIN_OUTLINE_SCORE}")
+        if reviewer_result.get("approved", False) and score >= min_score_threshold:
+            logger.info(f"✅ 大纲审批通过！评分：{score}/{min_score_threshold}")
             final_outline = writer_result
             break
         else:
-            logger.warning(f"❌ 大纲审批未通过，评分：{score}/{MIN_OUTLINE_SCORE}")
+            logger.warning(f"❌ 大纲审批未通过，评分：{score}/{min_score_threshold}")
             logger.info(f"修改建议：{reviewer_result.get('suggestions', [])}")
 
             # 如果是最后一次迭代，使用当前版本
-            if iteration == MAX_OUTLINE_ITERATIONS - 1:
+            if iteration == max_rewrite_iterations - 1:
                 logger.warning("已达最大重写次数，使用当前版本")
                 final_outline = writer_result
                 break
@@ -1922,6 +1955,7 @@ async def _call_outline_planner_agent(
     context: str,
     user_id: int,
     timeout: float,
+    temperature: float,
 ) -> Dict[str, Any]:
     """
     调用大纲规划Agent
@@ -1940,7 +1974,7 @@ async def _call_outline_planner_agent(
         provider=provider,
         model=model,
         messages=messages,
-        temperature=OUTLINE_PLANNER_TEMPERATURE,
+        temperature=temperature,
         timeout=timeout,
         user_id=user_id,
         response_format="json_object",
@@ -1970,6 +2004,7 @@ async def _call_outline_writer_agent(
     context: str,
     user_id: int,
     timeout: float,
+    temperature: float,
 ) -> Dict[str, Any]:
     """
     调用大纲撰写Agent
@@ -1987,7 +2022,7 @@ async def _call_outline_writer_agent(
         provider=provider,
         model=model,
         messages=messages,
-        temperature=OUTLINE_WRITER_TEMPERATURE,
+        temperature=temperature,
         timeout=timeout,
         user_id=user_id,
         response_format="json_object",
@@ -2011,6 +2046,7 @@ async def _call_outline_reviewer_agent(
     context: str,
     user_id: int,
     timeout: float,
+    temperature: float,
 ) -> Dict[str, Any]:
     """
     调用大纲审核Agent
@@ -2028,7 +2064,7 @@ async def _call_outline_reviewer_agent(
         provider=provider,
         model=model,
         messages=messages,
-        temperature=OUTLINE_REVIEWER_TEMPERATURE,
+        temperature=temperature,
         timeout=timeout,
         user_id=user_id,
         response_format="json_object",

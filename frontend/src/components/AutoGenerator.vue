@@ -132,6 +132,91 @@
         </div>
       </div>
 
+      <!-- 高级配置 - 增强模式 -->
+      <div v-if="form.generationMode === 'enhanced'" class="advanced-config">
+        <h4>⚙️ 增强模式高级配置</h4>
+        <div class="form-group">
+          <label>生成温度（Temperature）</label>
+          <input
+            v-model.number="form.enhancedTemperature"
+            type="number"
+            step="0.1"
+            min="0"
+            max="2"
+            placeholder="0.9"
+          />
+          <span class="hint">控制生成的随机性，0=确定性，2=最随机（默认0.9，推荐0.7-1.1）</span>
+        </div>
+      </div>
+
+      <!-- 高级配置 - 3Agent模式 -->
+      <div v-if="form.generationMode === 'agent_dialogue'" class="advanced-config">
+        <h4>⚙️ 三Agent模式高级配置</h4>
+
+        <div class="form-group">
+          <label>思考Agent温度</label>
+          <input
+            v-model.number="form.agentPlannerTemperature"
+            type="number"
+            step="0.1"
+            min="0"
+            max="2"
+            placeholder="0.7"
+          />
+          <span class="hint">思考Agent的温度，控制规划的创造性（默认0.7）</span>
+        </div>
+
+        <div class="form-group">
+          <label>写作Agent温度</label>
+          <input
+            v-model.number="form.agentWriterTemperature"
+            type="number"
+            step="0.1"
+            min="0"
+            max="2"
+            placeholder="0.9"
+          />
+          <span class="hint">写作Agent的温度，控制创作的创造性（默认0.9，推荐0.8-1.0）</span>
+        </div>
+
+        <div class="form-group">
+          <label>审批Agent温度</label>
+          <input
+            v-model.number="form.agentReviewerTemperature"
+            type="number"
+            step="0.1"
+            min="0"
+            max="2"
+            placeholder="0.3"
+          />
+          <span class="hint">审批Agent的温度，控制评审的严格性（默认0.3，建议保持低值）</span>
+        </div>
+
+        <div class="form-group">
+          <label>最低通过分数</label>
+          <input
+            v-model.number="form.agentMinScore"
+            type="number"
+            min="60"
+            max="100"
+            placeholder="80"
+          />
+          <span class="hint">审批Agent的最低通过分数（默认80分，章节评分≥此值才通过）</span>
+        </div>
+
+        <div class="form-group">
+          <label>最大重写次数</label>
+          <input
+            v-model.number="form.agentMaxIterations"
+            type="number"
+            min="1"
+            max="10"
+            placeholder="5"
+          />
+          <span class="hint">写作Agent的最大重写次数（默认5次，达到上限后使用当前版本）</span>
+        </div>
+      </div>
+
       <div class="creative-features-section">
         <h4>🎨 创意功能（AI自动分析）</h4>
         <p class="section-hint">这些功能会在章节生成后自动运行，提供智能分析和建议</p>
@@ -339,7 +424,15 @@ const form = ref({
   enableCharacterConsistency: true,
   enableForeshadowing: true,
   autoUpload: false,  // 自动上传开关
-  fanqieAccount: 'default'  // 番茄小说账号
+  fanqieAccount: 'default',  // 番茄小说账号
+  // 增强模式配置
+  enhancedTemperature: null as number | null,  // 增强模式温度，null表示使用后端默认值
+  // 3Agent模式配置
+  agentPlannerTemperature: null as number | null,  // 思考Agent温度
+  agentWriterTemperature: null as number | null,   // 写作Agent温度
+  agentReviewerTemperature: null as number | null, // 审批Agent温度
+  agentMinScore: null as number | null,            // 最低通过分数
+  agentMaxIterations: null as number | null        // 最大重写次数
 })
 
 const createTask = async () => {
@@ -358,7 +451,15 @@ const createTask = async () => {
         outline_version_count: form.value.outlineVersionCount,  // 大纲版本数
         enable_tension_analysis: form.value.enableTensionAnalysis,
         enable_character_consistency: form.value.enableCharacterConsistency,
-        enable_foreshadowing: form.value.enableForeshadowing
+        enable_foreshadowing: form.value.enableForeshadowing,
+        // 增强模式配置
+        enhanced_temperature: form.value.enhancedTemperature,
+        // 3Agent模式配置
+        agent_planner_temperature: form.value.agentPlannerTemperature,
+        agent_writer_temperature: form.value.agentWriterTemperature,
+        agent_reviewer_temperature: form.value.agentReviewerTemperature,
+        agent_min_score: form.value.agentMinScore,
+        agent_max_iterations: form.value.agentMaxIterations
       }
     })
 
@@ -685,6 +786,22 @@ onUnmounted(() => {
   padding: 12px;
   border-radius: 6px;
   background: white;
+}
+
+/* 高级配置样式 */
+.advanced-config {
+  margin-top: 20px;
+  padding: 20px;
+  background: linear-gradient(135deg, #fef5e7 0%, #fadbd8 100%);
+  border-radius: 8px;
+  border: 2px solid #f8c291;
+}
+
+.advanced-config h4 {
+  margin-bottom: 15px;
+  color: #d35400;
+  font-size: 16px;
+  font-weight: 600;
 }
 
 .mode-hint {

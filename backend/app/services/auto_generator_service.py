@@ -827,11 +827,16 @@ class AutoGeneratorService:
                 # ✅ 获取生成模式（支持Agent模式）
                 generation_mode = task.generation_config.get("generation_mode", "basic")
 
+                # ✅ 读取增强模式自定义温度配置
+                enhanced_temp = task.generation_config.get("enhanced_temperature")
+                temperature = enhanced_temp if enhanced_temp is not None else 0.9
+
                 response = await generate_chapter_content(
                     db_session=db,
                     system_prompt=writer_prompt,
                     user_prompt=prompt_input,
                     user_id=task.user_id,
+                    temperature=temperature,          # ✅ 传递温度配置
                     generation_mode=generation_mode,  # ✅ 传递生成模式
                     project_id=task.project_id,       # ✅ 传递项目ID（Agent需要）
                     chapter_number=next_chapter_number, # ✅ 传递章节号（Agent需要）
@@ -1427,6 +1432,14 @@ class AutoGeneratorService:
             from ..services.ai_orchestrator_helper import generate_outline_with_agents
 
             try:
+                # ✅ 读取3Agent自定义配置
+                agent_config = task.generation_config
+                planner_temp = agent_config.get("agent_planner_temperature")
+                writer_temp = agent_config.get("agent_writer_temperature")
+                reviewer_temp = agent_config.get("agent_reviewer_temperature")
+                min_score = agent_config.get("agent_min_score")
+                max_iterations = agent_config.get("agent_max_iterations")
+
                 result = await generate_outline_with_agents(
                     db_session=db,
                     project_id=task.project_id,
@@ -1436,6 +1449,11 @@ class AutoGeneratorService:
                     completed_summaries=completed_summaries,
                     volumes_data=volumes_data,
                     timeout=600.0,
+                    planner_temperature=planner_temp,
+                    writer_temperature=writer_temp,
+                    reviewer_temperature=reviewer_temp,
+                    min_score=min_score,
+                    max_iterations=max_iterations,
                 )
 
                 # 从result中提取章节数据和元数据
