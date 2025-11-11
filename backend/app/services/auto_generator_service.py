@@ -827,11 +827,16 @@ class AutoGeneratorService:
                 # ✅ 获取生成模式（支持Agent模式）
                 generation_mode = task.generation_config.get("generation_mode", "basic")
 
+                # ✅ 读取增强模式自定义温度配置
+                enhanced_temp = task.generation_config.get("enhanced_temperature")
+                temperature = enhanced_temp if enhanced_temp is not None else 0.9
+
                 response = await generate_chapter_content(
                     db_session=db,
                     system_prompt=writer_prompt,
                     user_prompt=prompt_input,
                     user_id=task.user_id,
+                    temperature=temperature,          # ✅ 传递温度配置
                     generation_mode=generation_mode,  # ✅ 传递生成模式
                     project_id=task.project_id,       # ✅ 传递项目ID（Agent需要）
                     chapter_number=next_chapter_number, # ✅ 传递章节号（Agent需要）
@@ -1412,113 +1417,192 @@ class AutoGeneratorService:
             },
         }
 
-        # ✅ 使用AI路由系统生成大纲
-        from ..services.ai_orchestrator_helper import generate_outline
+        # ✅ 检查是否使用3Agent大纲生成模式
+        generation_mode = task.generation_config.get("generation_mode", "basic")
 
-        # 记录任务日志
-        await cls._log(
-            db,
-            task.id,
-            "info",
-            f"正在生成从第 {start_chapter} 章开始的大纲（AI 自主决定章节数）..."
-        )
-
-        # 🔄 生成多个大纲版本并让AI选择最佳
-        outline_version_count = task.generation_config.get("outline_version_count", 3)  # 从配置读取
-        outline_version_count = max(1, min(outline_version_count, 5))  # 限制在1-5之间
-
-        outline_versions = []
-
-        for version_idx in range(outline_version_count):
+        if generation_mode == "agent_dialogue":
+            # ========== 3Agent大纲生成模式 ==========
             await cls._log(
                 db,
                 task.id,
                 "info",
-                f"正在生成大纲版本 {version_idx + 1}/{outline_version_count}..."
+                f"使用3Agent模式生成从第 {start_chapter} 章开始的大纲..."
             )
 
-            logger.info(
-                f"开始调用AI功能: OUTLINE_GENERATION, 起始章节: {start_chapter}, 版本: {version_idx + 1}"
-            )
+            from ..services.ai_orchestrator_helper import generate_outline_with_agents
 
             try:
-                response = await generate_outline(
+                # ✅ 读取3Agent自定义配置
+                agent_config = task.generation_config
+                planner_temp = agent_config.get("agent_planner_temperature")
+                writer_temp = agent_config.get("agent_writer_temperature")
+                reviewer_temp = agent_config.get("agent_reviewer_temperature")
+                min_score = agent_config.get("agent_min_score")
+                max_iterations = agent_config.get("agent_max_iterations")
+                # ✅ 读取3Agent LLM配置
+                planner_provider = agent_config.get("agent_planner_provider")
+                planner_model = agent_config.get("agent_planner_model")
+                writer_provider = agent_config.get("agent_writer_provider")
+                writer_model = agent_config.get("agent_writer_model")
+                reviewer_provider = agent_config.get("agent_reviewer_provider")
+                reviewer_model = agent_config.get("agent_reviewer_model")
+
+                result = await generate_outline_with_agents(
                     db_session=db,
-                    system_prompt=outline_prompt,
-                    user_prompt=json.dumps(payload, ensure_ascii=False),
+                    project_id=task.project_id,
+                    start_chapter=start_chapter,
                     user_id=user_id,
-                    temperature=0.7 + (version_idx * 0.1),  # 温度变化产生差异
+                    blueprint_dict=blueprint_dict,
+                    completed_summaries=completed_summaries,
+                    volumes_data=volumes_data,
+                    timeout=600.0,
+                    planner_temperature=planner_temp,
+                    writer_temperature=writer_temp,
+                    reviewer_temperature=reviewer_temp,
+                    min_score=min_score,
+                    max_iterations=max_iterations,
+                    planner_provider=planner_provider,
+                    planner_model=planner_model,
+                    writer_provider=writer_provider,
+                    writer_model=writer_model,
+                    reviewer_provider=reviewer_provider,
+                    reviewer_model=reviewer_model,
+                )
+
+                # 从result中提取章节数据和元数据
+                # 保留完整的result数据（包含volume_title, characters等）
+                data = result.copy()
+                # metadata用于日志记录
+                metadata = result.get("metadata", {})
+
+                await cls._log(
+                    db,
+                    task.id,
+                    "success",
+                    f"3Agent模式生成成功：{len(data['chapters'])}章，"
+                    f"迭代{metadata.get('iterations', 0)}轮，"
+                    f"评分{metadata.get('final_score', 0)}"
+                )
+
+            except Exception as e:
+                logger.error(f"3Agent大纲生成失败: {str(e)}", exc_info=True)
+                await cls._log(
+                    db,
+                    task.id,
+                    "error",
+                    f"3Agent大纲生成失败: {str(e)}"
+                )
+                raise
+
+        else:
+            # ========== 传统多版本大纲生成模式 ==========
+            # ✅ 使用AI路由系统生成大纲
+            from ..services.ai_orchestrator_helper import generate_outline
+
+            # 记录任务日志
+            await cls._log(
+                db,
+                task.id,
+                "info",
+                f"正在生成从第 {start_chapter} 章开始的大纲（AI 自主决定章节数）..."
+            )
+
+            # 🔄 生成多个大纲版本并让AI选择最佳
+            outline_version_count = task.generation_config.get("outline_version_count", 3)  # 从配置读取
+            outline_version_count = max(1, min(outline_version_count, 5))  # 限制在1-5之间
+
+            outline_versions = []
+
+            for version_idx in range(outline_version_count):
+                await cls._log(
+                    db,
+                    task.id,
+                    "info",
+                    f"正在生成大纲版本 {version_idx + 1}/{outline_version_count}..."
                 )
 
                 logger.info(
-                    f"AI功能调用成功: OUTLINE_GENERATION, 起始章节: {start_chapter}, 版本: {version_idx + 1}"
+                    f"开始调用AI功能: OUTLINE_GENERATION, 起始章节: {start_chapter}, 版本: {version_idx + 1}"
                 )
 
-                # 解析响应
-                normalized = unwrap_markdown_json(remove_think_tags(response))
-                version_data = json.loads(normalized)
-
-                # 验证基本结构
-                if version_data.get("chapters"):
-                    outline_versions.append({
-                        "version_id": version_idx + 1,
-                        "data": version_data,
-                        "raw_response": normalized[:500]
-                    })
-                    await cls._log(
-                        db,
-                        task.id,
-                        "success",
-                        f"版本 {version_idx + 1} 生成成功，包含 {len(version_data.get('chapters', []))} 个章节"
+                try:
+                    response = await generate_outline(
+                        db_session=db,
+                        system_prompt=outline_prompt,
+                        user_prompt=json.dumps(payload, ensure_ascii=False),
+                        user_id=user_id,
+                        temperature=0.7 + (version_idx * 0.1),  # 温度变化产生差异
                     )
-                else:
-                    logger.warning(f"版本 {version_idx + 1} 缺少章节数据")
 
-            except json.JSONDecodeError as exc:
-                logger.warning(f"版本 {version_idx + 1} JSON解析失败: {exc}")
-                await cls._log(db, task.id, "warning", f"版本 {version_idx + 1} 生成失败")
-                continue
-            except Exception as e:
-                logger.error(f"版本 {version_idx + 1} 生成失败: {str(e)}")
-                await cls._log(db, task.id, "warning", f"版本 {version_idx + 1} 生成失败: {str(e)}")
-                continue
+                    logger.info(
+                        f"AI功能调用成功: OUTLINE_GENERATION, 起始章节: {start_chapter}, 版本: {version_idx + 1}"
+                    )
 
-        if not outline_versions:
-            raise ValueError("所有大纲版本均生成失败，请检查提示词或重试")
+                    # 解析响应
+                    normalized = unwrap_markdown_json(remove_think_tags(response))
+                    version_data = json.loads(normalized)
 
-        # 🎯 AI评估选择最佳版本（只有多版本时才评估）
-        if len(outline_versions) > 1:
-            await cls._log(
-                db,
-                task.id,
-                "info",
-                f"开始AI评估 {len(outline_versions)} 个大纲版本..."
-            )
+                    # 验证基本结构
+                    if version_data.get("chapters"):
+                        outline_versions.append({
+                            "version_id": version_idx + 1,
+                            "data": version_data,
+                            "raw_response": normalized[:500]
+                        })
+                        await cls._log(
+                            db,
+                            task.id,
+                            "success",
+                            f"版本 {version_idx + 1} 生成成功，包含 {len(version_data.get('chapters', []))} 个章节"
+                        )
+                    else:
+                        logger.warning(f"版本 {version_idx + 1} 缺少章节数据")
 
-            best_version_idx = await cls._evaluate_outline_versions(
-                db=db,
-                task=task,
-                outline_versions=outline_versions,
-                blueprint_dict=blueprint_dict,
-                llm_service=LLMService(db),
-                prompt_service=prompt_service,
-                completed_chapters=completed_summaries,
-                previous_two_chapters=previous_two_chapters,
-                start_chapter=start_chapter,
-                volumes_data=volumes_data
-            )
+                except json.JSONDecodeError as exc:
+                    logger.warning(f"版本 {version_idx + 1} JSON解析失败: {exc}")
+                    await cls._log(db, task.id, "warning", f"版本 {version_idx + 1} 生成失败")
+                    continue
+                except Exception as e:
+                    logger.error(f"版本 {version_idx + 1} 生成失败: {str(e)}")
+                    await cls._log(db, task.id, "warning", f"版本 {version_idx + 1} 生成失败: {str(e)}")
+                    continue
 
-            data = outline_versions[best_version_idx]["data"]
-            await cls._log(
-                db,
-                task.id,
-                "success",
-                f"AI选择了版本 {best_version_idx + 1} 作为最佳大纲"
-            )
-        else:
-            # 只有一个版本，直接使用
-            data = outline_versions[0]["data"]
-            await cls._log(db, task.id, "info", "只生成了1个版本，直接使用")
+            if not outline_versions:
+                raise ValueError("所有大纲版本均生成失败，请检查提示词或重试")
+
+            # 🎯 AI评估选择最佳版本（只有多版本时才评估）
+            if len(outline_versions) > 1:
+                await cls._log(
+                    db,
+                    task.id,
+                    "info",
+                    f"开始AI评估 {len(outline_versions)} 个大纲版本..."
+                )
+
+                best_version_idx = await cls._evaluate_outline_versions(
+                    db=db,
+                    task=task,
+                    outline_versions=outline_versions,
+                    blueprint_dict=blueprint_dict,
+                    llm_service=LLMService(db),
+                    prompt_service=prompt_service,
+                    completed_chapters=completed_summaries,
+                    previous_two_chapters=previous_two_chapters,
+                    start_chapter=start_chapter,
+                    volumes_data=volumes_data
+                )
+
+                data = outline_versions[best_version_idx]["data"]
+                await cls._log(
+                    db,
+                    task.id,
+                    "success",
+                    f"AI选择了版本 {best_version_idx + 1} 作为最佳大纲"
+                )
+            else:
+                # 只有一个版本，直接使用
+                data = outline_versions[0]["data"]
+                await cls._log(db, task.id, "info", "只生成了1个版本，直接使用")
 
         # 提取数据
         volume_title = data.get("volume_title", "")

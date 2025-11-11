@@ -132,6 +132,174 @@
         </div>
       </div>
 
+      <!-- 高级配置 - 增强模式 -->
+      <div v-if="form.generationMode === 'enhanced'" class="advanced-config">
+        <h4>⚙️ 增强模式高级配置</h4>
+        <div class="form-group">
+          <label>生成温度（Temperature）</label>
+          <input
+            v-model.number="form.enhancedTemperature"
+            type="number"
+            step="0.1"
+            min="0"
+            max="2"
+            placeholder="0.9"
+          />
+          <span class="hint">控制生成的随机性，0=确定性，2=最随机（默认0.9，推荐0.7-1.1）</span>
+        </div>
+      </div>
+
+      <!-- 高级配置 - 3Agent模式 -->
+      <div v-if="form.generationMode === 'agent_dialogue'" class="advanced-config">
+        <h4>⚙️ 三Agent模式高级配置</h4>
+
+        <!-- 规划Agent配置 -->
+        <div class="agent-section">
+          <h5>🧠 规划Agent (Planner)</h5>
+
+          <div class="form-group">
+            <label>LLM提供商</label>
+            <select v-model="form.agentPlannerProvider">
+              <option value="">使用默认配置</option>
+              <option value="siliconflow">SiliconFlow</option>
+              <option value="openai">OpenAI</option>
+              <option value="deepseek">DeepSeek</option>
+            </select>
+            <span class="hint">选择规划Agent使用的AI提供商（留空使用系统默认）</span>
+          </div>
+
+          <div class="form-group" v-if="form.agentPlannerProvider">
+            <label>LLM模型</label>
+            <input
+              v-model="form.agentPlannerModel"
+              type="text"
+              placeholder="例如: deepseek-ai/DeepSeek-V3"
+            />
+            <span class="hint">输入完整的模型名称</span>
+          </div>
+
+          <div class="form-group">
+            <label>温度（Temperature）</label>
+            <input
+              v-model.number="form.agentPlannerTemperature"
+              type="number"
+              step="0.1"
+              min="0"
+              max="2"
+              placeholder="0.6"
+            />
+            <span class="hint">控制规划的创造性（默认0.6，推荐0.5-0.8）</span>
+          </div>
+        </div>
+
+        <!-- 写作Agent配置 -->
+        <div class="agent-section">
+          <h5>✍️ 写作Agent (Writer)</h5>
+
+          <div class="form-group">
+            <label>LLM提供商</label>
+            <select v-model="form.agentWriterProvider">
+              <option value="">使用默认配置</option>
+              <option value="siliconflow">SiliconFlow</option>
+              <option value="openai">OpenAI</option>
+              <option value="deepseek">DeepSeek</option>
+            </select>
+            <span class="hint">选择写作Agent使用的AI提供商（留空使用系统默认）</span>
+          </div>
+
+          <div class="form-group" v-if="form.agentWriterProvider">
+            <label>LLM模型</label>
+            <input
+              v-model="form.agentWriterModel"
+              type="text"
+              placeholder="例如: deepseek-ai/DeepSeek-V3"
+            />
+            <span class="hint">输入完整的模型名称</span>
+          </div>
+
+          <div class="form-group">
+            <label>温度（Temperature）</label>
+            <input
+              v-model.number="form.agentWriterTemperature"
+              type="number"
+              step="0.1"
+              min="0"
+              max="2"
+              placeholder="0.9"
+            />
+            <span class="hint">控制创作的创造性（默认0.9，推荐0.8-1.0）</span>
+          </div>
+        </div>
+
+        <!-- 审批Agent配置 -->
+        <div class="agent-section">
+          <h5>✅ 审批Agent (Reviewer)</h5>
+
+          <div class="form-group">
+            <label>LLM提供商</label>
+            <select v-model="form.agentReviewerProvider">
+              <option value="">使用默认配置</option>
+              <option value="siliconflow">SiliconFlow</option>
+              <option value="openai">OpenAI</option>
+              <option value="deepseek">DeepSeek</option>
+            </select>
+            <span class="hint">选择审批Agent使用的AI提供商（留空使用系统默认）</span>
+          </div>
+
+          <div class="form-group" v-if="form.agentReviewerProvider">
+            <label>LLM模型</label>
+            <input
+              v-model="form.agentReviewerModel"
+              type="text"
+              placeholder="例如: deepseek-ai/DeepSeek-V3"
+            />
+            <span class="hint">输入完整的模型名称</span>
+          </div>
+
+          <div class="form-group">
+            <label>温度（Temperature）</label>
+            <input
+              v-model.number="form.agentReviewerTemperature"
+              type="number"
+              step="0.1"
+              min="0"
+              max="2"
+              placeholder="0.3"
+            />
+            <span class="hint">控制评审的严格性（默认0.3，建议保持低值）</span>
+          </div>
+        </div>
+
+        <!-- 通用配置 -->
+        <div class="agent-section">
+          <h5>⚙️ 通用配置</h5>
+
+          <div class="form-group">
+            <label>最低通过分数</label>
+            <input
+              v-model.number="form.agentMinScore"
+              type="number"
+              min="60"
+              max="100"
+              placeholder="75"
+            />
+            <span class="hint">审批Agent的最低通过分数（默认75分，大纲评分≥此值才通过）</span>
+          </div>
+
+          <div class="form-group">
+            <label>最大重写次数</label>
+            <input
+              v-model.number="form.agentMaxIterations"
+              type="number"
+              min="1"
+              max="10"
+              placeholder="3"
+            />
+            <span class="hint">写作Agent的最大重写次数（默认3次，达到上限后使用当前版本）</span>
+          </div>
+        </div>
+      </div>
+
       <div class="creative-features-section">
         <h4>🎨 创意功能（AI自动分析）</h4>
         <p class="section-hint">这些功能会在章节生成后自动运行，提供智能分析和建议</p>
@@ -339,7 +507,22 @@ const form = ref({
   enableCharacterConsistency: true,
   enableForeshadowing: true,
   autoUpload: false,  // 自动上传开关
-  fanqieAccount: 'default'  // 番茄小说账号
+  fanqieAccount: 'default',  // 番茄小说账号
+  // 增强模式配置
+  enhancedTemperature: null as number | null,  // 增强模式温度，null表示使用后端默认值
+  // 3Agent模式配置
+  agentPlannerTemperature: null as number | null,  // 规划Agent温度
+  agentWriterTemperature: null as number | null,   // 写作Agent温度
+  agentReviewerTemperature: null as number | null, // 审批Agent温度
+  agentMinScore: null as number | null,            // 最低通过分数
+  agentMaxIterations: null as number | null,       // 最大重写次数
+  // 3Agent LLM配置
+  agentPlannerProvider: '',    // 规划Agent提供商
+  agentPlannerModel: '',       // 规划Agent模型
+  agentWriterProvider: '',     // 写作Agent提供商
+  agentWriterModel: '',        // 写作Agent模型
+  agentReviewerProvider: '',   // 审批Agent提供商
+  agentReviewerModel: ''       // 审批Agent模型
 })
 
 const createTask = async () => {
@@ -358,7 +541,22 @@ const createTask = async () => {
         outline_version_count: form.value.outlineVersionCount,  // 大纲版本数
         enable_tension_analysis: form.value.enableTensionAnalysis,
         enable_character_consistency: form.value.enableCharacterConsistency,
-        enable_foreshadowing: form.value.enableForeshadowing
+        enable_foreshadowing: form.value.enableForeshadowing,
+        // 增强模式配置
+        enhanced_temperature: form.value.enhancedTemperature,
+        // 3Agent模式配置
+        agent_planner_temperature: form.value.agentPlannerTemperature,
+        agent_writer_temperature: form.value.agentWriterTemperature,
+        agent_reviewer_temperature: form.value.agentReviewerTemperature,
+        agent_min_score: form.value.agentMinScore,
+        agent_max_iterations: form.value.agentMaxIterations,
+        // 3Agent LLM配置
+        agent_planner_provider: form.value.agentPlannerProvider || null,
+        agent_planner_model: form.value.agentPlannerModel || null,
+        agent_writer_provider: form.value.agentWriterProvider || null,
+        agent_writer_model: form.value.agentWriterModel || null,
+        agent_reviewer_provider: form.value.agentReviewerProvider || null,
+        agent_reviewer_model: form.value.agentReviewerModel || null
       }
     })
 
@@ -685,6 +883,41 @@ onUnmounted(() => {
   padding: 12px;
   border-radius: 6px;
   background: white;
+}
+
+/* 高级配置样式 */
+.advanced-config {
+  margin-top: 20px;
+  padding: 20px;
+  background: linear-gradient(135deg, #fef5e7 0%, #fadbd8 100%);
+  border-radius: 8px;
+  border: 2px solid #f8c291;
+}
+
+.advanced-config h4 {
+  margin-bottom: 15px;
+  color: #d35400;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.agent-section {
+  margin-top: 20px;
+  padding: 15px;
+  background: rgba(255, 255, 255, 0.6);
+  border-radius: 8px;
+  border-left: 4px solid #667eea;
+}
+
+.agent-section:first-child {
+  margin-top: 0;
+}
+
+.agent-section h5 {
+  margin: 0 0 15px 0;
+  color: #4a5568;
+  font-size: 15px;
+  font-weight: 600;
 }
 
 .mode-hint {

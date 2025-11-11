@@ -3,10 +3,12 @@ AI Orchestrator 辅助函数
 
 提供便捷的方法来使用Orchestrator，简化现有代码的集成
 """
+import asyncio
 import logging
 import json
+import time
 from datetime import datetime, timezone
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,6 +17,26 @@ from ..services.ai_orchestrator import AIOrchestrator
 from ..services.llm_service import LLMService
 
 logger = logging.getLogger(__name__)
+
+
+# ==================== 三Agent对话模式常量配置 ====================
+MAX_REWRITE_ITERATIONS = 5  # 最多重写次数
+MAX_PLANNER_TOOL_ROUNDS = 3  # 思考Agent最多工具调用轮数
+MAX_WRITER_TOOL_ROUNDS = 2  # 写作Agent最多工具调用轮数
+MIN_APPROVAL_SCORE = 80  # 审批通过最低分数
+PLANNER_TEMPERATURE = 0.7  # 思考Agent温度
+WRITER_TEMPERATURE = 0.9  # 写作Agent温度
+REVIEWER_TEMPERATURE = 0.3  # 审批Agent温度
+SUMMARIZER_TEMPERATURE = 0.5  # 总结Agent温度
+AGENT_DIALOGUE_TOTAL_TIMEOUT = 600.0  # 三Agent对话总超时时间（10分钟）
+
+# ==================== 三Agent大纲生成模式常量配置 ====================
+MAX_OUTLINE_ITERATIONS = 3  # 大纲最多重写次数
+MIN_OUTLINE_SCORE = 75  # 大纲审批通过最低分数（略低于章节的80分，因为大纲是规划阶段）
+OUTLINE_PLANNER_TEMPERATURE = 0.6  # 大纲规划Agent温度（更理性，专注于结构规划）
+OUTLINE_WRITER_TEMPERATURE = 0.9  # 大纲撰写Agent温度（更有创造性，同章节Writer）
+OUTLINE_REVIEWER_TEMPERATURE = 0.3  # 大纲审核Agent温度（严格客观）
+OUTLINE_DIALOGUE_TOTAL_TIMEOUT = 600.0  # 大纲生成总超时时间（10分钟）
 
 
 async def call_ai_function(
@@ -900,8 +922,32 @@ async def _tool_check_plot_consistency(
     """检查剧情一致性"""
     check_items = arguments.get("check_items", [])
 
-    # TODO: 实现剧情一致性检查
-    return f"剧情一致性检查：[暂未实现，需要分析历史章节中的 {', '.join(check_items)}]"
+    if not project_id:
+        return "错误：缺少project_id"
+
+    if not check_items:
+        return "错误：未指定需要检查的项目"
+
+    results = []
+
+    for item in check_items:
+        # 搜索相关章节
+        search_result = await _tool_search_chapters(
+            db_session=db_session,
+            project_id=project_id,
+            arguments={"keyword": item, "limit": 5}
+        )
+
+        results.append(f"## 检查项目：{item}\n{search_result}\n")
+
+    if results:
+        return (
+            "=== 剧情一致性检查结果 ===\n\n"
+            "以下是历史章节中关于这些项目的描述，请仔细检查是否存在矛盾：\n\n"
+            + "\n".join(results)
+        )
+    else:
+        return f"未找到关于 {', '.join(check_items)} 的相关内容"
 
 
 async def _tool_find_foreshadowing(
@@ -912,8 +958,87 @@ async def _tool_find_foreshadowing(
     """查找伏笔"""
     chapter_range = arguments.get("chapter_range", "")
 
-    # TODO: 实现伏笔查找
-    return f"章节范围{chapter_range}的伏笔：[暂未实现，需要分析章节中的未解决线索]"
+    if not project_id:
+        return "错误：缺少project_id"
+
+    # 解析章节范围（如"1-50"）
+    start_chapter = 1
+    end_chapter = 999
+    if chapter_range and "-" in chapter_range:
+        try:
+            parts = chapter_range.split("-")
+            start_chapter = int(parts[0])
+            end_chapter = int(parts[1])
+        except (ValueError, IndexError):
+            return f"错误：无效的章节范围格式'{chapter_range}'，应该是'1-50'"
+
+    try:
+        from sqlalchemy import select, and_
+        from sqlalchemy.orm import selectinload
+        from ..models.novel import Chapter
+
+        # 查询指定范围的章节
+        stmt = select(Chapter).where(
+            and_(
+                Chapter.project_id == project_id,
+                Chapter.chapter_number >= start_chapter,
+                Chapter.chapter_number <= end_chapter,
+                Chapter.status == "successful"
+            )
+        ).options(
+            selectinload(Chapter.selected_version)
+        ).order_by(Chapter.chapter_number)
+
+        result = await db_session.execute(stmt)
+        chapters = result.scalars().all()
+
+        if not chapters:
+            return f"章节范围{chapter_range}未找到已完成的章节"
+
+        # 搜索可能包含伏笔的关键词
+        foreshadowing_keywords = ["伏笔", "暗示", "预兆", "留下", "埋下", "隐藏", "秘密", "线索", "疑问"]
+
+        results = []
+        for ch in chapters:
+            if not ch.selected_version:
+                continue
+
+            content = ch.selected_version.content
+            found_keywords = []
+
+            for keyword in foreshadowing_keywords:
+                if keyword in content:
+                    # 找到包含关键词的位置，提取前后文
+                    keyword_pos = content.find(keyword)
+                    start_pos = max(0, keyword_pos - 150)
+                    end_pos = min(len(content), keyword_pos + 200)
+                    snippet = content[start_pos:end_pos]
+                    found_keywords.append((keyword, snippet))
+
+            # 也检查章节摘要
+            if ch.summary:
+                for keyword in foreshadowing_keywords:
+                    if keyword in ch.summary:
+                        found_keywords.append((keyword, f"摘要：{ch.summary}"))
+
+            if found_keywords:
+                chapter_result = f"【第{ch.chapter_number}章】{ch.title or ''}\n"
+                for kw, snippet in found_keywords[:3]:  # 最多显示3个
+                    chapter_result += f"  含'{kw}'：...{snippet}...\n"
+                results.append(chapter_result)
+
+        if results:
+            return (
+                f"=== 章节{chapter_range}的伏笔线索 ===\n\n"
+                f"找到 {len(results)} 章可能包含伏笔或未解决线索：\n\n"
+                + "\n".join(results)
+            )
+        else:
+            return f"章节范围{chapter_range}未找到明显的伏笔标记"
+
+    except Exception as e:
+        logger.error(f"查找伏笔失败: {str(e)}")
+        return f"查找失败: {str(e)}"
 
 
 
@@ -930,7 +1055,7 @@ async def _generate_with_agent_dialogue(
     chapter_number: Optional[int],
 ) -> str:
     """
-    三Agent对话模式生成章节
+    三Agent对话模式生成章节（带总体超时控制）
 
     工作流程：
     1. 思考Agent：分析大纲，决定查询什么历史信息
@@ -945,7 +1070,7 @@ async def _generate_with_agent_dialogue(
         user_prompt: 用户提示词（上下文：所有章节摘要 + 前两章完整内容 + 当前章大纲）
         user_id: 用户ID
         temperature: 温度参数
-        timeout: 超时时间
+        timeout: 超时时间（单次AI调用超时）
         project_id: 项目ID（必需）
         chapter_number: 章节号（必需）
 
@@ -954,8 +1079,47 @@ async def _generate_with_agent_dialogue(
 
     Raises:
         ValueError: 如果project_id或chapter_number为None
+        asyncio.TimeoutError: 如果总体超时
     """
-    import json
+    # 添加总体超时控制
+    try:
+        result = await asyncio.wait_for(
+            _generate_with_agent_dialogue_impl(
+                db_session=db_session,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                user_id=user_id,
+                temperature=temperature,
+                timeout=timeout,
+                project_id=project_id,
+                chapter_number=chapter_number,
+            ),
+            timeout=AGENT_DIALOGUE_TOTAL_TIMEOUT
+        )
+        return result
+    except asyncio.TimeoutError:
+        logger.error(f"三Agent对话超时（{AGENT_DIALOGUE_TOTAL_TIMEOUT}秒）：第{chapter_number}章")
+        raise ValueError(
+            f"生成超时（{AGENT_DIALOGUE_TOTAL_TIMEOUT/60:.1f}分钟），"
+            "请减少重写次数或稍后重试"
+        )
+
+
+async def _generate_with_agent_dialogue_impl(
+    db_session: AsyncSession,
+    system_prompt: str,
+    user_prompt: str,
+    user_id: int,
+    temperature: float,
+    timeout: float,
+    project_id: Optional[str],
+    chapter_number: Optional[int],
+) -> str:
+    """
+    三Agent对话模式生成章节（实际实现）
+
+    内部实现函数，由_generate_with_agent_dialogue包装调用
+    """
     from ..config.agent_tools import NOVEL_AGENT_TOOLS
     from ..config.agent_prompts import get_agent_prompt
     from ..config.ai_function_config import get_function_config
@@ -966,8 +1130,9 @@ async def _generate_with_agent_dialogue(
     if chapter_number is None:
         raise ValueError("三Agent对话模式需要chapter_number参数")
 
+    start_time = time.time()
     logger.info(f"=== 三Agent对话模式开始：第{chapter_number}章 ===")
-    
+
     llm_service = LLMService(db_session)
     config = get_function_config(AIFunctionType.CHAPTER_CONTENT_WRITING)
     provider = config.primary.provider
@@ -978,18 +1143,21 @@ async def _generate_with_agent_dialogue(
     
     # ==================== 阶段1：思考Agent ====================
     logger.info("阶段1：思考Agent分析大纲并查询历史信息")
-    
+    planner_start = time.time()
+
     planner_result = await _call_planner_agent(
         llm_service=llm_service,
         provider=provider,
         model=model,
         user_prompt=user_prompt,
         user_id=user_id,
-        temperature=0.7,  # 思考Agent用较低温度
+        temperature=PLANNER_TEMPERATURE,
         timeout=timeout,
         project_id=project_id,
         chapter_number=chapter_number,
     )
+
+    logger.info(f"思考Agent完成，耗时: {time.time() - planner_start:.2f}秒")
     
     conversation_history.append({
         "agent": "planner",
@@ -999,32 +1167,34 @@ async def _generate_with_agent_dialogue(
     
     # ==================== 阶段2-4：写作↔审批循环 ====================
     logger.info("阶段2-4：写作Agent生成内容，审批Agent审核")
-    
+
     final_content = None
-    max_iterations = 5  # 最多重写5次
-    
-    for iteration in range(max_iterations):
-        logger.info(f"--- 写作迭代 {iteration + 1}/{max_iterations} ---")
-        
+
+    for iteration in range(MAX_REWRITE_ITERATIONS):
+        logger.info(f"--- 写作迭代 {iteration + 1}/{MAX_REWRITE_ITERATIONS} ---")
+
         # 阶段2：写作Agent生成内容
+        writer_start = time.time()
         writer_context = _build_writer_context(
             user_prompt=user_prompt,
             planner_result=planner_result,
             conversation_history=conversation_history,
             is_rewrite=(iteration > 0)
         )
-        
+
         writer_result = await _call_writer_agent(
             llm_service=llm_service,
             provider=provider,
             model=model,
             writer_context=writer_context,
             user_id=user_id,
-            temperature=0.9,  # 写作用高温度
+            temperature=WRITER_TEMPERATURE,
             timeout=timeout,
             project_id=project_id,
             chapter_number=chapter_number,
         )
+
+        logger.info(f"写作Agent完成，耗时: {time.time() - writer_start:.2f}秒")
         
         # ✅ 优化：只存储摘要，避免conversation_history膨胀
         writer_summary = {
@@ -1040,40 +1210,44 @@ async def _generate_with_agent_dialogue(
         })
         
         # 阶段3：审批Agent审核
+        reviewer_start = time.time()
         reviewer_context = _build_reviewer_context(
             writer_result=writer_result,
             conversation_history=conversation_history,
             user_prompt=user_prompt
         )
-        
+
         reviewer_result = await _call_reviewer_agent(
             llm_service=llm_service,
             provider=provider,
             model=model,
             reviewer_context=reviewer_context,
             user_id=user_id,
-            temperature=0.3,  # 审批用低温度（更客观）
+            temperature=REVIEWER_TEMPERATURE,
             timeout=timeout,
         )
-        
+
+        logger.info(f"审批Agent完成，耗时: {time.time() - reviewer_start:.2f}秒")
+
         conversation_history.append({
             "agent": "reviewer",
             "iteration": iteration + 1,
             "content": reviewer_result,
             "timestamp": datetime.now(timezone.utc).isoformat()
         })
-        
+
         # 检查是否通过
-        if reviewer_result.get("approved", False):
-            logger.info(f"✅ 审批通过！评分：{reviewer_result.get('score', 0)}")
+        score = reviewer_result.get("score", 0)
+        if reviewer_result.get("approved", False) and score >= MIN_APPROVAL_SCORE:
+            logger.info(f"✅ 审批通过！评分：{score}/{MIN_APPROVAL_SCORE}")
             final_content = writer_result.get("full_content", "")
             break
         else:
-            logger.warning(f"❌ 审批未通过，评分：{reviewer_result.get('score', 0)}")
+            logger.warning(f"❌ 审批未通过，评分：{score}/{MIN_APPROVAL_SCORE}")
             logger.info(f"修改建议：{reviewer_result.get('suggestions', [])}")
-            
+
             # 如果是最后一次迭代，使用当前版本
-            if iteration == max_iterations - 1:
+            if iteration == MAX_REWRITE_ITERATIONS - 1:
                 logger.warning("已达最大重写次数，使用当前版本")
                 final_content = writer_result.get("full_content", "")
                 break
@@ -1083,22 +1257,25 @@ async def _generate_with_agent_dialogue(
     
     # ==================== 阶段5：总结Agent生成摘要 ====================
     logger.info("阶段5：总结Agent生成章节摘要")
-    
+    summarizer_start = time.time()
+
     summarizer_context = _build_summarizer_context(
         final_content=final_content,
         conversation_history=conversation_history,
         user_prompt=user_prompt
     )
-    
+
     summarizer_result = await _call_summarizer_agent(
         llm_service=llm_service,
         provider=provider,
         model=model,
         summarizer_context=summarizer_context,
         user_id=user_id,
-        temperature=0.5,
+        temperature=SUMMARIZER_TEMPERATURE,
         timeout=timeout,
     )
+
+    logger.info(f"总结Agent完成，耗时: {time.time() - summarizer_start:.2f}秒")
     
     conversation_history.append({
         "agent": "summarizer",
@@ -1107,18 +1284,28 @@ async def _generate_with_agent_dialogue(
     })
     
     # ==================== 返回最终结果 ====================
+    total_time = time.time() - start_time
+    iterations = len([h for h in conversation_history if h["agent"] == "writer"])
+
     result = {
         "full_content": final_content,
         "summary": summarizer_result.get("summary", ""),
         "metadata": {
             "conversation_history": conversation_history,
-            "iterations": len([h for h in conversation_history if h["agent"] == "writer"]),
-            "final_score": conversation_history[-2].get("content", {}).get("score", 0)  # 最后一次审批的分数
+            "iterations": iterations,
+            "final_score": conversation_history[-2].get("content", {}).get("score", 0) if len(conversation_history) >= 2 else 0,
+            "total_time_seconds": round(total_time, 2)
         }
     }
-    
-    logger.info(f"=== 三Agent对话完成，迭代{result['metadata']['iterations']}次 ===")
-    
+
+    logger.info(
+        f"=== 三Agent对话完成 ===\n"
+        f"  章节号: {chapter_number}\n"
+        f"  迭代次数: {iterations}\n"
+        f"  最终评分: {result['metadata']['final_score']}\n"
+        f"  总耗时: {total_time:.2f}秒 ({total_time/60:.1f}分钟)"
+    )
+
     return json.dumps(result, ensure_ascii=False)
 
 
@@ -1134,24 +1321,23 @@ async def _call_planner_agent(
     timeout: float,
     project_id: str,
     chapter_number: int,
-) -> Dict:
+) -> Dict[str, Any]:
     """
     调用思考Agent
-    
+
     上下文：所有章节摘要 + 前两章完整内容 + 当前章大纲
     任务：分析大纲，决定查询什么，调用工具查询
     """
-    import json
     from ..config.agent_tools import NOVEL_AGENT_TOOLS
     from ..config.agent_prompts import get_agent_prompt
-    
+
     messages = [
         {"role": "system", "content": get_agent_prompt("planner")},
         {"role": "user", "content": user_prompt}
     ]
-    
+
     # Agent可以调用工具查询，最多3轮
-    for round_num in range(3):
+    for round_num in range(MAX_PLANNER_TOOL_ROUNDS):
         response_str = await llm_service.invoke(
             provider=provider,
             model=model,
@@ -1164,9 +1350,16 @@ async def _call_planner_agent(
         
         try:
             response = json.loads(response_str)
-        except json.JSONDecodeError:
-            # 不是JSON，说明是最终结果
+        except json.JSONDecodeError as e:
+            # 不是JSON，说明是最终结果（或者是纯文本响应）
+            logger.warning(
+                f"思考Agent返回非JSON格式（第{round_num + 1}轮），"
+                f"响应前200字: {response_str[:200]}"
+            )
             return {"analysis": response_str}
+        except Exception as e:
+            logger.error(f"思考Agent处理响应时出错: {e}", exc_info=True)
+            raise
         
         # 检查是否有工具调用
         if "tool_calls" in response and response["tool_calls"]:
@@ -1210,24 +1403,23 @@ async def _call_writer_agent(
     timeout: float,
     project_id: str,
     chapter_number: int,
-) -> Dict:
+) -> Dict[str, Any]:
     """
     调用写作Agent
-    
+
     上下文：思考结果 + 查询结果 + 所有章节摘要 + 前两章 + 审批意见（如果是重写）
     任务：撰写章节内容
     """
-    import json
     from ..config.agent_tools import NOVEL_AGENT_TOOLS
     from ..config.agent_prompts import get_agent_prompt
-    
+
     messages = [
         {"role": "system", "content": get_agent_prompt("writer")},
         {"role": "user", "content": writer_context}
     ]
-    
+
     # 写作Agent也可以调用工具（如果需要更多信息），最多2轮
-    for round_num in range(2):
+    for round_num in range(MAX_WRITER_TOOL_ROUNDS):
         is_final_round = (round_num == 1)
         
         response_str = await llm_service.invoke(
@@ -1243,8 +1435,16 @@ async def _call_writer_agent(
         
         try:
             response = json.loads(response_str)
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as e:
+            # JSON解析失败，将原始响应作为内容
+            logger.warning(
+                f"写作Agent返回非JSON格式（第{round_num + 1}轮），"
+                f"响应前200字: {response_str[:200]}"
+            )
             return {"full_content": response_str}
+        except Exception as e:
+            logger.error(f"写作Agent处理响应时出错: {e}", exc_info=True)
+            raise
         
         # 检查是否有工具调用
         if "tool_calls" in response and response["tool_calls"] and not is_final_round:
@@ -1281,21 +1481,20 @@ async def _call_reviewer_agent(
     user_id: int,
     temperature: float,
     timeout: float,
-) -> Dict:
+) -> Dict[str, Any]:
     """
     调用审批Agent
-    
+
     上下文：写作内容 + 写作Agent的所有上下文
     任务：审核质量，返回通过/不通过 + 修改建议
     """
-    import json
     from ..config.agent_prompts import get_agent_prompt
-    
+
     messages = [
         {"role": "system", "content": get_agent_prompt("reviewer")},
         {"role": "user", "content": reviewer_context}
     ]
-    
+
     response_str = await llm_service.invoke(
         provider=provider,
         model=model,
@@ -1305,7 +1504,7 @@ async def _call_reviewer_agent(
         user_id=user_id,
         response_format="json_object",  # 强制JSON格式
     )
-    
+
     try:
         response = json.loads(response_str)
         return response
@@ -1319,6 +1518,15 @@ async def _call_reviewer_agent(
             "suggestions": ["审批Agent返回了非JSON格式的响应，请检查提示词或重试"],
             "issues": ["审批系统异常"]
         }
+    except Exception as e:
+        logger.error(f"审批Agent处理响应时出错: {e}", exc_info=True)
+        return {
+            "approved": False,
+            "score": 0,
+            "feedback": f"审批系统错误: {str(e)}",
+            "suggestions": ["系统异常，请重试"],
+            "issues": ["审批系统异常"]
+        }
 
 
 async def _call_summarizer_agent(
@@ -1329,21 +1537,20 @@ async def _call_summarizer_agent(
     user_id: int,
     temperature: float,
     timeout: float,
-) -> Dict:
+) -> Dict[str, Any]:
     """
     调用总结Agent
-    
+
     上下文：对话历史 + 所有AI上下文 + 本章内容
     任务：生成精炼的章节摘要
     """
-    import json
     from ..config.agent_prompts import get_agent_prompt
-    
+
     messages = [
         {"role": "system", "content": get_agent_prompt("summarizer")},
         {"role": "user", "content": summarizer_context}
     ]
-    
+
     response_str = await llm_service.invoke(
         provider=provider,
         model=model,
@@ -1353,25 +1560,27 @@ async def _call_summarizer_agent(
         user_id=user_id,
         response_format="json_object",
     )
-    
+
     try:
         response = json.loads(response_str)
         return response
-    except json.JSONDecodeError:
+    except json.JSONDecodeError as e:
+        logger.error(f"总结Agent返回非JSON格式: {e}, 原始响应前200字: {response_str[:200]}")
         return {"summary": "摘要生成失败"}
+    except Exception as e:
+        logger.error(f"总结Agent处理响应时出错: {e}", exc_info=True)
+        return {"summary": f"摘要生成失败: {str(e)}"}
 
 
 # ==================== 上下文构建辅助函数 ====================
 
 def _build_writer_context(
     user_prompt: str,
-    planner_result: Dict,
-    conversation_history: List[Dict],
+    planner_result: Dict[str, Any],
+    conversation_history: List[Dict[str, Any]],
     is_rewrite: bool
 ) -> str:
     """构建写作Agent的上下文"""
-    # json已在文件顶部导入，但为了清晰在此声明
-
     context_parts = [
         "# 章节上下文（所有章节摘要 + 前两章完整内容 + 当前章大纲）",
         user_prompt,
@@ -1405,13 +1614,11 @@ def _build_writer_context(
 
 
 def _build_reviewer_context(
-    writer_result: Dict,
-    conversation_history: List[Dict],
+    writer_result: Dict[str, Any],
+    conversation_history: List[Dict[str, Any]],
     user_prompt: str
 ) -> str:
     """构建审批Agent的上下文"""
-    import json
-    
     context_parts = [
         "# 章节要求和背景",
         user_prompt,
@@ -1442,11 +1649,10 @@ def _build_reviewer_context(
 
 def _build_summarizer_context(
     final_content: str,
-    conversation_history: List[Dict],
+    conversation_history: List[Dict[str, Any]],
     user_prompt: str
 ) -> str:
     """构建总结Agent的上下文"""
-    
     context_parts = [
         "# 章节完整内容",
         f"```markdown\n{final_content}\n```",
@@ -1457,5 +1663,637 @@ def _build_summarizer_context(
         "# 请生成精炼的章节摘要（JSON格式：{\"summary\": \"...\"}）",
         "要求：100-200字，抓住主要情节和冲突，避免流水账"
     ]
-    
+
+    return "\n".join(context_parts)
+
+
+# ==================== 三Agent大纲生成模式 ====================
+
+async def generate_outline_with_agents(
+    db_session: AsyncSession,
+    project_id: str,
+    start_chapter: int,
+    user_id: int,
+    blueprint_dict: Dict[str, Any],
+    completed_summaries: List[Dict[str, Any]],
+    volumes_data: List[Dict[str, Any]],
+    timeout: float = 600.0,
+    planner_temperature: Optional[float] = None,
+    writer_temperature: Optional[float] = None,
+    reviewer_temperature: Optional[float] = None,
+    min_score: Optional[int] = None,
+    max_iterations: Optional[int] = None,
+    planner_provider: Optional[str] = None,
+    planner_model: Optional[str] = None,
+    writer_provider: Optional[str] = None,
+    writer_model: Optional[str] = None,
+    reviewer_provider: Optional[str] = None,
+    reviewer_model: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    使用3Agent对话模式生成大纲（带总体超时控制）
+
+    工作流程：
+    1. 规划Agent：分析项目，规划章节结构
+    2. 写作Agent：根据规划撰写详细大纲
+    3. 审批Agent：审核大纲质量，提供修改意见
+    4. 如果不通过：写作Agent重写（可多轮，最多3次）
+
+    Args:
+        db_session: 数据库会话
+        project_id: 项目ID
+        start_chapter: 起始章节号
+        user_id: 用户ID
+        blueprint_dict: 项目蓝图（包含题材、基调、目标读者等）
+        completed_summaries: 已完成章节的摘要列表
+        volumes_data: 分卷数据
+        timeout: 超时时间（默认600秒）
+        planner_temperature: 规划Agent温度（默认使用OUTLINE_PLANNER_TEMPERATURE）
+        writer_temperature: 写作Agent温度（默认使用OUTLINE_WRITER_TEMPERATURE）
+        reviewer_temperature: 审批Agent温度（默认使用OUTLINE_REVIEWER_TEMPERATURE）
+        min_score: 最低通过分数（默认使用MIN_OUTLINE_SCORE）
+        max_iterations: 最大重写次数（默认使用MAX_OUTLINE_ITERATIONS）
+
+    Returns:
+        生成的大纲数据（Dict格式，包含chapters列表和metadata）
+
+    Raises:
+        ValueError: 参数验证失败
+        asyncio.TimeoutError: 如果总体超时
+    """
+    # ✅ 参数验证
+    if not project_id:
+        raise ValueError("project_id不能为空")
+    if not isinstance(start_chapter, int) or start_chapter < 1:
+        raise ValueError(f"start_chapter必须是大于0的整数，当前值：{start_chapter}")
+    if not blueprint_dict:
+        raise ValueError("blueprint_dict不能为空，请先创建项目蓝图")
+    if not isinstance(user_id, int) or user_id < 1:
+        raise ValueError(f"user_id必须是大于0的整数，当前值：{user_id}")
+
+    try:
+        result = await asyncio.wait_for(
+            _generate_outline_with_agents_impl(
+                db_session=db_session,
+                project_id=project_id,
+                start_chapter=start_chapter,
+                user_id=user_id,
+                blueprint_dict=blueprint_dict,
+                completed_summaries=completed_summaries,
+                volumes_data=volumes_data,
+                planner_temperature=planner_temperature,
+                writer_temperature=writer_temperature,
+                reviewer_temperature=reviewer_temperature,
+                min_score=min_score,
+                max_iterations=max_iterations,
+                planner_provider=planner_provider,
+                planner_model=planner_model,
+                writer_provider=writer_provider,
+                writer_model=writer_model,
+                reviewer_provider=reviewer_provider,
+                reviewer_model=reviewer_model,
+            ),
+            timeout=OUTLINE_DIALOGUE_TOTAL_TIMEOUT
+        )
+        return result
+    except asyncio.TimeoutError:
+        logger.error(f"3Agent大纲生成超时（{OUTLINE_DIALOGUE_TOTAL_TIMEOUT}秒）")
+        raise ValueError(
+            f"大纲生成超时（{OUTLINE_DIALOGUE_TOTAL_TIMEOUT/60:.1f}分钟），"
+            "请稍后重试"
+        )
+
+
+async def _generate_outline_with_agents_impl(
+    db_session: AsyncSession,
+    project_id: str,
+    start_chapter: int,
+    user_id: int,
+    blueprint_dict: Dict[str, Any],
+    completed_summaries: List[Dict[str, Any]],
+    volumes_data: List[Dict[str, Any]],
+    planner_temperature: Optional[float] = None,
+    writer_temperature: Optional[float] = None,
+    reviewer_temperature: Optional[float] = None,
+    min_score: Optional[int] = None,
+    max_iterations: Optional[int] = None,
+    planner_provider: Optional[str] = None,
+    planner_model: Optional[str] = None,
+    writer_provider: Optional[str] = None,
+    writer_model: Optional[str] = None,
+    reviewer_provider: Optional[str] = None,
+    reviewer_model: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    三Agent对话模式生成大纲（实际实现）
+
+    内部实现函数，由generate_outline_with_agents包装调用
+    """
+    from ..config.outline_agent_prompts import get_outline_agent_prompt
+    from ..config.ai_function_config import get_function_config
+
+    start_time = time.time()
+    logger.info(f"=== 3Agent大纲生成模式开始：从第{start_chapter}章开始 ===")
+
+    llm_service = LLMService(db_session)
+    config = get_function_config(AIFunctionType.OUTLINE_GENERATION)
+    default_provider = config.primary.provider
+    default_model = config.primary.model
+
+    # ✅ 使用自定义配置或默认值
+    planner_temp = planner_temperature if planner_temperature is not None else OUTLINE_PLANNER_TEMPERATURE
+    writer_temp = writer_temperature if writer_temperature is not None else OUTLINE_WRITER_TEMPERATURE
+    reviewer_temp = reviewer_temperature if reviewer_temperature is not None else OUTLINE_REVIEWER_TEMPERATURE
+    min_score_threshold = min_score if min_score is not None else MIN_OUTLINE_SCORE
+    max_rewrite_iterations = max_iterations if max_iterations is not None else MAX_OUTLINE_ITERATIONS
+
+    # ✅ 设置每个Agent的LLM配置
+    planner_llm_provider = planner_provider if planner_provider else default_provider
+    planner_llm_model = planner_model if planner_model else default_model
+    writer_llm_provider = writer_provider if writer_provider else default_provider
+    writer_llm_model = writer_model if writer_model else default_model
+    reviewer_llm_provider = reviewer_provider if reviewer_provider else default_provider
+    reviewer_llm_model = reviewer_model if reviewer_model else default_model
+
+    logger.info(f"配置参数: planner_temp={planner_temp}, writer_temp={writer_temp}, "
+                f"reviewer_temp={reviewer_temp}, min_score={min_score_threshold}, max_iterations={max_rewrite_iterations}")
+    logger.info(f"LLM配置: Planner={planner_llm_provider}/{planner_llm_model}, "
+                f"Writer={writer_llm_provider}/{writer_llm_model}, "
+                f"Reviewer={reviewer_llm_provider}/{reviewer_llm_model}")
+
+    # 对话历史（记录所有Agent的交互）
+    conversation_history = []
+
+    # 构建初始上下文
+    context = _build_outline_initial_context(
+        blueprint_dict=blueprint_dict,
+        completed_summaries=completed_summaries,
+        volumes_data=volumes_data,
+        start_chapter=start_chapter,
+    )
+
+    # ==================== 阶段1：规划Agent ====================
+    logger.info("阶段1：规划Agent分析项目并规划章节结构")
+    planner_start = time.time()
+
+    planner_result = await _call_outline_planner_agent(
+        llm_service=llm_service,
+        provider=planner_llm_provider,
+        model=planner_llm_model,
+        context=context,
+        user_id=user_id,
+        timeout=120.0,
+        temperature=planner_temp,
+    )
+
+    logger.info(f"规划Agent完成，耗时: {time.time() - planner_start:.2f}秒")
+
+    conversation_history.append({
+        "agent": "outline_planner",
+        "content": planner_result,
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    })
+
+    # ==================== 阶段2-3：写作↔审批循环 ====================
+    logger.info("阶段2-3：写作Agent撰写大纲，审批Agent审核")
+
+    final_outline = None
+    final_score = 0
+
+    for iteration in range(max_rewrite_iterations):
+        logger.info(f"--- 大纲写作迭代 {iteration + 1}/{max_rewrite_iterations} ---")
+
+        # 阶段2：写作Agent撰写大纲
+        writer_start = time.time()
+        writer_context = _build_outline_writer_context(
+            initial_context=context,
+            planner_result=planner_result,
+            conversation_history=conversation_history,
+            is_rewrite=(iteration > 0)
+        )
+
+        writer_result = await _call_outline_writer_agent(
+            llm_service=llm_service,
+            provider=writer_llm_provider,
+            model=writer_llm_model,
+            context=writer_context,
+            user_id=user_id,
+            timeout=180.0,
+            temperature=writer_temp,
+        )
+
+        logger.info(f"写作Agent完成，耗时: {time.time() - writer_start:.2f}秒")
+
+        conversation_history.append({
+            "agent": "outline_writer",
+            "iteration": iteration + 1,
+            "content": {
+                "chapters_count": len(writer_result.get("chapters", [])),
+                "notes": writer_result.get("notes", "")
+            },
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        })
+
+        # 阶段3：审批Agent审核
+        reviewer_start = time.time()
+        reviewer_context = _build_outline_reviewer_context(
+            writer_result=writer_result,
+            conversation_history=conversation_history,
+            initial_context=context
+        )
+
+        reviewer_result = await _call_outline_reviewer_agent(
+            llm_service=llm_service,
+            provider=reviewer_llm_provider,
+            model=reviewer_llm_model,
+            context=reviewer_context,
+            user_id=user_id,
+            timeout=120.0,
+            temperature=reviewer_temp,
+        )
+
+        logger.info(f"审批Agent完成，耗时: {time.time() - reviewer_start:.2f}秒")
+
+        conversation_history.append({
+            "agent": "outline_reviewer",
+            "iteration": iteration + 1,
+            "content": reviewer_result,
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        })
+
+        # 检查是否通过
+        score = reviewer_result.get("score", 0)
+        final_score = score
+
+        if reviewer_result.get("approved", False) and score >= min_score_threshold:
+            logger.info(f"✅ 大纲审批通过！评分：{score}/{min_score_threshold}")
+            final_outline = writer_result
+            break
+        else:
+            logger.warning(f"❌ 大纲审批未通过，评分：{score}/{min_score_threshold}")
+            logger.info(f"修改建议：{reviewer_result.get('suggestions', [])}")
+
+            # 如果是最后一次迭代，使用当前版本
+            if iteration == max_rewrite_iterations - 1:
+                logger.warning("已达最大重写次数，使用当前版本")
+                final_outline = writer_result
+                break
+
+    if not final_outline or not final_outline.get("chapters"):
+        raise ValueError("大纲生成失败：无法生成有效的章节大纲")
+
+    # ==================== 返回最终结果 ====================
+    total_time = time.time() - start_time
+    iterations = len([h for h in conversation_history if h["agent"] == "outline_writer"])
+
+    # ✅ 返回与传统模式兼容的完整数据结构
+    result = {
+        "volume_title": final_outline.get("volume_title", ""),
+        "chapters": final_outline.get("chapters", []),
+        "characters": final_outline.get("characters", []),
+        "relationships": final_outline.get("relationships", []),
+        "world_setting": final_outline.get("world_setting", {}),
+        "metadata": {
+            "conversation_history": conversation_history,
+            "iterations": iterations,
+            "final_score": final_score,
+            "total_time": total_time,
+            "planner_analysis": planner_result.get("analysis", ""),
+            "generation_mode": "agent_dialogue",  # 标记生成模式
+        }
+    }
+
+    logger.info(
+        f"=== 3Agent大纲生成完成 ===\n"
+        f"  起始章节: {start_chapter}\n"
+        f"  生成章节数: {len(final_outline.get('chapters', []))}\n"
+        f"  迭代次数: {iterations}\n"
+        f"  最终评分: {final_score}\n"
+        f"  总耗时: {total_time:.2f}秒 ({total_time/60:.1f}分钟)"
+    )
+
+    return result
+
+
+# ==================== 大纲Agent调用辅助函数 ====================
+
+async def _call_outline_planner_agent(
+    llm_service: LLMService,
+    provider: str,
+    model: str,
+    context: str,
+    user_id: int,
+    timeout: float,
+    temperature: float,
+) -> Dict[str, Any]:
+    """
+    调用大纲规划Agent
+
+    上下文：项目蓝图 + 已完成章节摘要 + 分卷信息
+    任务：分析项目，规划章节结构和节奏
+    """
+    from ..config.outline_agent_prompts import get_outline_agent_prompt
+
+    messages = [
+        {"role": "system", "content": get_outline_agent_prompt("planner")},
+        {"role": "user", "content": context}
+    ]
+
+    response_str = await llm_service.invoke(
+        provider=provider,
+        model=model,
+        messages=messages,
+        temperature=temperature,
+        timeout=timeout,
+        user_id=user_id,
+        response_format="json_object",
+    )
+
+    try:
+        response = json.loads(response_str)
+        return response
+    except json.JSONDecodeError as e:
+        logger.error(
+            f"规划Agent返回非JSON格式，响应前200字: {response_str[:200]}",
+            exc_info=True
+        )
+        # 返回默认结构
+        return {
+            "analysis": response_str[:500],
+            "chapter_plan": {"total_chapters": 50, "structure": "线性", "key_points": []},
+            "rhythm": "均衡节奏",
+            "notes": "解析失败，使用默认规划"
+        }
+
+
+async def _call_outline_writer_agent(
+    llm_service: LLMService,
+    provider: str,
+    model: str,
+    context: str,
+    user_id: int,
+    timeout: float,
+    temperature: float,
+) -> Dict[str, Any]:
+    """
+    调用大纲撰写Agent
+
+    任务：根据规划方案撰写详细的章节大纲（标题+摘要）
+    """
+    from ..config.outline_agent_prompts import get_outline_agent_prompt
+
+    messages = [
+        {"role": "system", "content": get_outline_agent_prompt("writer")},
+        {"role": "user", "content": context}
+    ]
+
+    response_str = await llm_service.invoke(
+        provider=provider,
+        model=model,
+        messages=messages,
+        temperature=temperature,
+        timeout=timeout,
+        user_id=user_id,
+        response_format="json_object",
+    )
+
+    try:
+        response = json.loads(response_str)
+        return response
+    except json.JSONDecodeError as e:
+        logger.error(
+            f"写作Agent返回非JSON格式，响应前200字: {response_str[:200]}",
+            exc_info=True
+        )
+        raise ValueError("大纲撰写失败：返回格式错误")
+
+
+async def _call_outline_reviewer_agent(
+    llm_service: LLMService,
+    provider: str,
+    model: str,
+    context: str,
+    user_id: int,
+    timeout: float,
+    temperature: float,
+) -> Dict[str, Any]:
+    """
+    调用大纲审核Agent
+
+    任务：审核大纲质量，提供评分和修改建议
+    """
+    from ..config.outline_agent_prompts import get_outline_agent_prompt
+
+    messages = [
+        {"role": "system", "content": get_outline_agent_prompt("reviewer")},
+        {"role": "user", "content": context}
+    ]
+
+    response_str = await llm_service.invoke(
+        provider=provider,
+        model=model,
+        messages=messages,
+        temperature=temperature,
+        timeout=timeout,
+        user_id=user_id,
+        response_format="json_object",
+    )
+
+    try:
+        response = json.loads(response_str)
+        # ✅ 确保默认行为安全：解析失败时不通过
+        if "approved" not in response:
+            response["approved"] = False
+        if "score" not in response:
+            response["score"] = 0
+        return response
+    except json.JSONDecodeError as e:
+        logger.error(
+            f"审批Agent返回非JSON格式，响应前200字: {response_str[:200]}",
+            exc_info=True
+        )
+        # 返回不通过的默认结果
+        return {
+            "approved": False,
+            "score": 0,
+            "issues": ["返回格式错误，无法解析"],
+            "suggestions": ["请重新生成"],
+            "feedback": "审批失败：返回格式错误"
+        }
+
+
+# ==================== 大纲生成上下文构建函数 ====================
+
+def _build_outline_initial_context(
+    blueprint_dict: Dict[str, Any],
+    completed_summaries: List[Dict[str, Any]],
+    volumes_data: List[Dict[str, Any]],
+    start_chapter: int,
+) -> str:
+    """构建大纲生成的初始上下文"""
+    context_parts = [
+        "# 项目蓝图",
+        f"题材：{blueprint_dict.get('genre', '未指定')}",
+        f"基调：{blueprint_dict.get('tone', '未指定')}",
+        f"目标读者：{blueprint_dict.get('target_audience', '未指定')}",
+        "",
+        "# 分卷信息",
+    ]
+
+    for vol in volumes_data:
+        context_parts.append(
+            f"- {vol.get('title', '未命名卷')}：{vol.get('description', '无描述')}"
+        )
+
+    context_parts.extend([
+        "",
+        f"# 当前进度",
+        f"已完成章节：{len(completed_summaries)}章",
+        f"下一批大纲起始章节：第{start_chapter}章",
+        "",
+    ])
+
+    if completed_summaries:
+        context_parts.extend([
+            "# 已完成章节摘要（最近10章）",
+        ])
+        for summary in completed_summaries[-10:]:
+            context_parts.append(
+                f"第{summary.get('chapter_number', '?')}章 - {summary.get('title', '未命名')}：{summary.get('summary', '')}"
+            )
+    else:
+        context_parts.append("（这是项目的第一批大纲）")
+
+    return "\n".join(context_parts)
+
+
+def _build_outline_writer_context(
+    initial_context: str,
+    planner_result: Dict[str, Any],
+    conversation_history: List[Dict[str, Any]],
+    is_rewrite: bool,
+) -> str:
+    """构建大纲写作Agent的上下文"""
+    context_parts = [
+        initial_context,
+        "",
+        "# 规划方案",
+        f"## 项目分析",
+        planner_result.get("analysis", ""),
+        "",
+        f"## 卷名建议",
+        f"建议卷名：{planner_result.get('volume_title_suggestion', '未提供')}",
+        f"核心主题：{planner_result.get('volume_theme', '未提供')}",
+        "",
+        f"## 章节规划",
+        f"总章节数：{planner_result.get('chapter_plan', {}).get('total_chapters', 50)}",
+        f"本批生成：{planner_result.get('chapter_plan', {}).get('chapters_to_generate', 30)}章",
+        f"结构：{planner_result.get('chapter_plan', {}).get('structure', '线性')}",
+        "",
+        f"## 关键节点",
+    ]
+
+    for point in planner_result.get("chapter_plan", {}).get("key_points", []):
+        context_parts.append(f"- {point}")
+
+    # 添加世界观扩展
+    world_expansion = planner_result.get("world_expansion", {})
+    if world_expansion:
+        context_parts.extend([
+            "",
+            f"## 世界观扩展",
+        ])
+        if world_expansion.get("new_locations"):
+            context_parts.append(f"新地点：{', '.join(world_expansion.get('new_locations', []))}")
+        if world_expansion.get("new_forces"):
+            context_parts.append(f"新势力：{', '.join(world_expansion.get('new_forces', []))}")
+        if world_expansion.get("new_concepts"):
+            context_parts.append(f"新概念：{', '.join(world_expansion.get('new_concepts', []))}")
+
+    # 添加角色发展
+    character_dev = planner_result.get("character_development", {})
+    if character_dev:
+        context_parts.extend([
+            "",
+            f"## 角色发展",
+        ])
+        if character_dev.get("main_characters"):
+            context_parts.append("主要角色：")
+            for char in character_dev.get("main_characters", []):
+                context_parts.append(f"- {char}")
+        if character_dev.get("new_characters"):
+            context_parts.append("新增角色：")
+            for char in character_dev.get("new_characters", []):
+                context_parts.append(f"- {char}")
+
+    context_parts.extend([
+        "",
+        f"## 节奏安排",
+        planner_result.get("rhythm", ""),
+        "",
+        f"## 规划说明",
+        planner_result.get("notes", ""),
+    ])
+
+    if is_rewrite:
+        # 添加上一轮的审批意见
+        last_review = None
+        for h in reversed(conversation_history):
+            if h["agent"] == "outline_reviewer":
+                last_review = h["content"]
+                break
+
+        if last_review:
+            context_parts.extend([
+                "",
+                "# 修改要求（上一轮审批意见）",
+                f"评分：{last_review.get('score', 0)}/100",
+                "",
+                "## 问题",
+            ])
+            for issue in last_review.get("issues", []):
+                context_parts.append(f"- {issue}")
+
+            context_parts.append("\n## 修改建议")
+            for suggestion in last_review.get("suggestions", []):
+                context_parts.append(f"- {suggestion}")
+
+    context_parts.append("\n# 请撰写详细的章节大纲")
+
+    return "\n".join(context_parts)
+
+
+def _build_outline_reviewer_context(
+    writer_result: Dict[str, Any],
+    conversation_history: List[Dict[str, Any]],
+    initial_context: str
+) -> str:
+    """构建大纲审核Agent的上下文"""
+    context_parts = [
+        "# 项目背景",
+        initial_context,
+        "",
+        "# 待审核的大纲",
+        f"章节数量：{len(writer_result.get('chapters', []))}",
+        "",
+    ]
+
+    for chapter in writer_result.get("chapters", []):
+        context_parts.append(
+            f"## 第{chapter.get('chapter_number', '?')}章：{chapter.get('title', '未命名')}"
+        )
+        context_parts.append(f"{chapter.get('summary', '')}")
+        context_parts.append("")
+
+    context_parts.extend([
+        "# 创作说明",
+        writer_result.get("notes", ""),
+        "",
+        "# 对话历史摘要",
+        f"已进行{len([h for h in conversation_history if h['agent'] == 'outline_writer'])}轮大纲撰写",
+        "",
+        "# 请审核上述大纲",
+        "输出JSON格式：{\"approved\": true/false, \"score\": 0-100, \"strengths\": [...], \"issues\": [...], \"suggestions\": [...], \"feedback\": \"...\"}",
+    ])
+
     return "\n".join(context_parts)
