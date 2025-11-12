@@ -167,31 +167,21 @@ def _clean_full_content(content: str, chapter_number: int = 0, version_idx: int 
             pass
 
     # 步骤2: 双重转义修复
-    # ⚠️ 只处理真正的双重转义（\\n、\\t等字符串字面量），而不是所有包含\的字符串
-    if isinstance(content, str):
-        # 检测是否有双重转义：查找 \\n \\t \\r \\" 等模式
-        has_double_escape = any([
-            '\\n' in content,   # 字符串字面量 \n
-            '\\t' in content,   # 字符串字面量 \t
-            '\\r' in content,   # 字符串字面量 \r
-            '\\"' in content,   # 字符串字面量 \"
-            "\\'" in content,   # 字符串字面量 \'
-        ])
+    # ✅ 安全地只替换转义序列，不影响中文（与auto_generator_service保持一致）
+    if isinstance(content, str) and ("\\" in content):
+        original_escaped = content
+        # 只替换常见的转义序列，不用 unicode_escape（会破坏中文）
+        content = content.replace("\\n", "\n")
+        content = content.replace("\\t", "\t")
+        content = content.replace("\\r", "\r")
+        content = content.replace('\\"', '"')
+        content = content.replace("\\'", "'")
+        content = content.replace("\\\\", "\\")
 
-        if has_double_escape:
-            try:
-                original_escaped = content
-                # 使用 encode().decode('unicode_escape') 进行反转义
-                content = content.encode('utf-8').decode('unicode_escape')
-
-                if content != original_escaped:
-                    logger.warning(
-                        f"第 {chapter_number} 章版本 {version_idx}: 检测到双重转义，已自动修复\n"
-                        f"  原始: {original_escaped[:80]}...\n"
-                        f"  修复后: {content[:80]}..."
-                    )
-            except Exception as e:
-                logger.error(f"第 {chapter_number} 章版本 {version_idx}: 反转义失败: {e}，保持原样")
+        if content != original_escaped:
+            logger.warning(
+                f"第 {chapter_number} 章版本 {version_idx}: 检测到双重转义，已自动修复"
+            )
 
     # 步骤3: Markdown标记清理
     if isinstance(content, str):

@@ -929,32 +929,21 @@ class AutoGeneratorService:
                                 # 不是JSON，保持原样
                                 pass
 
-                        # ✅ 处理双重转义：只处理真正的双重转义（\\n、\\t等），避免误伤UTF-8中文
-                        if isinstance(full_content, str):
-                            # 检测是否有双重转义：查找 \\n \\t \\r \\" 等模式
-                            has_double_escape = any([
-                                '\\n' in full_content,
-                                '\\t' in full_content,
-                                '\\r' in full_content,
-                                '\\"' in full_content,
-                                "\\'" in full_content,
-                            ])
+                        # ✅ 处理双重转义：安全地只替换转义序列，不影响中文
+                        if isinstance(full_content, str) and ("\\" in full_content):
+                            original_escaped = full_content
+                            # 只替换常见的转义序列，不用 unicode_escape（会破坏中文）
+                            full_content = full_content.replace("\\n", "\n")
+                            full_content = full_content.replace("\\t", "\t")
+                            full_content = full_content.replace("\\r", "\r")
+                            full_content = full_content.replace('\\"', '"')
+                            full_content = full_content.replace("\\'", "'")
+                            full_content = full_content.replace("\\\\", "\\")
 
-                            if has_double_escape:
-                                try:
-                                    original_escaped = full_content
-                                    # 使用 encode().decode('unicode_escape') 进行反转义
-                                    full_content = full_content.encode('utf-8').decode('unicode_escape')
-
-                                    if full_content != original_escaped:
-                                        logger.warning(
-                                            f"第 {next_chapter_number} 章版本 {idx+1}: 检测到双重转义，已自动修复\n"
-                                            f"  原始: {original_escaped[:80]}...\n"
-                                            f"  修复后: {full_content[:80]}..."
-                                        )
-                                except Exception as e:
-                                    logger.error(f"第 {next_chapter_number} 章版本 {idx+1}: 反转义失败: {e}，保持原样")
-                                    pass
+                            if full_content != original_escaped:
+                                logger.warning(
+                                    f"第 {next_chapter_number} 章版本 {idx+1}: 检测到双重转义，已自动修复"
+                                )
 
                         # ✅ 强制清理Markdown标记：无论是否检测到，都进行清理（防止漏检）
                         if isinstance(full_content, str):
@@ -974,31 +963,21 @@ class AutoGeneratorService:
                     elif "content" in variant and variant["content"]:
                         content = variant["content"]
 
-                        # ✅ 处理双重转义：只处理真正的双重转义（\\n、\\t等），避免误伤UTF-8中文
-                        if isinstance(content, str):
-                            # 检测是否有双重转义：查找 \\n \\t \\r \\" 等模式
-                            has_double_escape = any([
-                                '\\n' in content,
-                                '\\t' in content,
-                                '\\r' in content,
-                                '\\"' in content,
-                                "\\'" in content,
-                            ])
+                        # ✅ 处理双重转义：安全地只替换转义序列，不影响中文
+                        if isinstance(content, str) and ("\\" in content):
+                            original_escaped = content
+                            # 只替换常见的转义序列，不用 unicode_escape（会破坏中文）
+                            content = content.replace("\\n", "\n")
+                            content = content.replace("\\t", "\t")
+                            content = content.replace("\\r", "\r")
+                            content = content.replace('\\"', '"')
+                            content = content.replace("\\'", "'")
+                            content = content.replace("\\\\", "\\")
 
-                            if has_double_escape:
-                                try:
-                                    original_escaped = content
-                                    content = content.encode('utf-8').decode('unicode_escape')
-
-                                    if content != original_escaped:
-                                        logger.warning(
-                                            f"第 {next_chapter_number} 章版本 {idx+1}: content字段检测到双重转义，已自动修复\n"
-                                            f"  原始: {original_escaped[:80]}...\n"
-                                            f"  修复后: {content[:80]}..."
-                                        )
-                                except Exception as e:
-                                    logger.error(f"第 {next_chapter_number} 章版本 {idx+1}: content字段反转义失败: {e}")
-                                    pass
+                            if content != original_escaped:
+                                logger.warning(
+                                    f"第 {next_chapter_number} 章版本 {idx+1}: content字段检测到双重转义，已自动修复"
+                                )
 
                         # ✅ 强制清理Markdown标记：无论是否检测到，都进行清理（防止漏检）
                         if isinstance(content, str):
