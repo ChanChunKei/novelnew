@@ -267,7 +267,7 @@ try:
 except json.JSONDecodeError as e:
     print(f"❌ Metadata 解析失败: {e}")
 except Exception as e:
-    print(f("❌ 分析失败: {e}")
+    print(f"❌ 分析失败: {e}")
 
 conn.close()
 
