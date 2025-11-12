@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..config.ai_function_config import AIFunctionType
 from ..services.ai_orchestrator import AIOrchestrator
 from ..services.llm_service import LLMService
+from .auto_generator_service import strip_markdown_formatting
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +83,69 @@ async def get_agent_prompt_from_db(
     else:
         from ..config.agent_prompts import get_agent_prompt
         return get_agent_prompt(agent_type)
+
+
+def _clean_full_content(content: str, chapter_number: int = 0, version_idx: int = 0) -> str:
+    """
+    清理full_content，应用与auto_generator相同的清理流程
+
+    处理步骤：
+    1. 检测并处理嵌套JSON
+    2. 双重转义修复（\\n → \n）
+    3. Markdown标记清理
+
+    Args:
+        content: 原始内容
+        chapter_number: 章节号（用于日志）
+        version_idx: 版本号（用于日志）
+
+    Returns:
+        清理后的内容
+    """
+    if not content or not isinstance(content, str):
+        return content
+
+    original_content = content
+
+    # 步骤1: 检测嵌套JSON
+    if content.strip().startswith("{"):
+        try:
+            nested = json.loads(content)
+            if isinstance(nested, dict) and "full_content" in nested:
+                logger.warning(f"第 {chapter_number} 章版本 {version_idx}: 检测到嵌套JSON，自动提取")
+                content = nested["full_content"]
+        except json.JSONDecodeError:
+            pass
+
+    # 步骤2: 双重转义修复
+    if isinstance(content, str) and ("\\n" in content or "\\t" in content or "\\" in content):
+        try:
+            original_escaped = content
+            content = content.encode('utf-8').decode('unicode_escape')
+
+            if content != original_escaped:
+                logger.warning(
+                    f"第 {chapter_number} 章版本 {version_idx}: 检测到双重转义，已自动修复\n"
+                    f"  原始: {original_escaped[:80]}...\n"
+                    f"  修复后: {content[:80]}..."
+                )
+        except Exception as e:
+            logger.error(f"第 {chapter_number} 章版本 {version_idx}: 反转义失败: {e}，保持原样")
+
+    # 步骤3: Markdown标记清理
+    if isinstance(content, str):
+        cleaned = strip_markdown_formatting(content)
+
+        if cleaned != original_content:
+            logger.warning(
+                f"第 {chapter_number} 章版本 {version_idx}: 检测到并清理了格式标记\n"
+                f"  原始预览: {original_content[:100]}...\n"
+                f"  清理后预览: {cleaned[:100]}..."
+            )
+
+        return cleaned
+
+    return content
 
 
 async def call_ai_function(
@@ -1485,12 +1549,13 @@ async def _call_writer_agent(
         try:
             response = json.loads(response_str)
         except json.JSONDecodeError as e:
-            # JSON解析失败，将原始响应作为内容
+            # JSON解析失败，将原始响应作为内容（需要清理）
             logger.warning(
                 f"写作Agent返回非JSON格式（第{round_num + 1}轮），"
                 f"响应前200字: {response_str[:200]}"
             )
-            return {"full_content": response_str}
+            cleaned_content = _clean_full_content(response_str, chapter_number=chapter_number, version_idx=1)
+            return {"full_content": cleaned_content}
         except Exception as e:
             logger.error(f"写作Agent处理响应时出错: {e}", exc_info=True)
             raise
@@ -1516,9 +1581,15 @@ async def _call_writer_agent(
                 "content": json.dumps(tool_results, ensure_ascii=False)
             })
         else:
-            # 返回写作结果
+            # 清理full_content后返回
+            if "full_content" in response:
+                response["full_content"] = _clean_full_content(
+                    response["full_content"],
+                    chapter_number=chapter_number,
+                    version_idx=1
+                )
             return response
-    
+
     return {"full_content": "生成失败"}
 
 
