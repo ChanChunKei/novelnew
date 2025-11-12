@@ -28,8 +28,10 @@ logger = logging.getLogger(__name__)
 
 try:
     import google.generativeai as genai
+    from google.ai import generativelanguage as glm
 except ImportError:
     genai = None  # type: ignore[assignment]
+    glm = None  # type: ignore[assignment]
     logger.warning("未安装 google-generativeai，Gemini RAG 功能不可用")
 
 
@@ -65,12 +67,13 @@ class GeminiRAGService:
         Args:
             db_session: 数据库会话，用于读取配置
         """
-        if not genai:
+        if not genai or not glm:
             raise RuntimeError("缺少 google-generativeai 依赖，请先安装：pip install google-generativeai")
 
         self._db_session = db_session
         self._enabled = False
         self._api_key: Optional[str] = None
+        self._client: Optional[glm.RetrieverServiceClient] = None
 
     async def _ensure_configured(self) -> bool:
         """
@@ -90,6 +93,7 @@ class GeminiRAGService:
 
         try:
             genai.configure(api_key=api_key)
+            self._client = glm.RetrieverServiceClient()
             self._enabled = True
             self._api_key = api_key
             logger.info("✅ Gemini RAG 服务初始化成功")
@@ -174,14 +178,22 @@ class GeminiRAGService:
         display_name = self._get_corpus_name(project_id)
 
         try:
-            # 1. 尝试列出所有 corpus，查找是否已存在
-            for corpus in genai.list_corpora():
-                if corpus.display_name == display_name:
-                    logger.info(f"📚 找到已存在的 Corpus: {corpus.name}")
-                    return corpus.name
+            # 1. 尝试获取已存在的 corpus
+            corpus_path = f"corpora/{display_name}"
+            try:
+                request = glm.GetCorpusRequest(name=corpus_path)
+                corpus = self._client.get_corpus(request=request)
+                logger.info(f"📚 找到已存在的 Corpus: {corpus.name}")
+                return corpus.name
+            except Exception:
+                # Corpus 不存在，继续创建
+                pass
 
-            # 2. 不存在则创建新 corpus
-            corpus = genai.create_corpus(display_name=display_name)
+            # 2. 创建新 corpus
+            request = glm.CreateCorpusRequest(
+                corpus=glm.Corpus(display_name=display_name)
+            )
+            corpus = self._client.create_corpus(request=request)
             logger.info(f"✅ 创建 Corpus 成功: {corpus.name}")
             return corpus.name
 
@@ -226,15 +238,26 @@ class GeminiRAGService:
             document_content += content
 
             # 创建文档
-            document = genai.create_document(
-                corpus_name=corpus_name,
-                display_name=f"第{chapter_number}章",
-                custom_metadata=[
-                    {"key": "chapter_number", "numeric_value": float(chapter_number)},
-                    {"key": "chapter_title", "string_value": chapter_title},
-                ],
-                parts=[{"text": document_content}],
+            request = glm.CreateDocumentRequest(
+                parent=corpus_name,
+                document=glm.Document(
+                    display_name=f"第{chapter_number}章",
+                    custom_metadata=[
+                        glm.CustomMetadata(key="chapter_number", numeric_value=float(chapter_number)),
+                        glm.CustomMetadata(key="chapter_title", string_value=chapter_title),
+                    ],
+                ),
             )
+            document = self._client.create_document(request=request)
+
+            # 创建 chunk（实际内容）
+            chunk_request = glm.CreateChunkRequest(
+                parent=document.name,
+                chunk=glm.Chunk(
+                    data=glm.ChunkData(string_value=document_content)
+                ),
+            )
+            self._client.create_chunk(request=chunk_request)
 
             logger.info(f"✅ 章节入库成功: 第{chapter_number}章 {chapter_title}")
             return True
@@ -270,51 +293,43 @@ class GeminiRAGService:
 
         try:
             # 调用 Gemini Semantic Retrieval API
-            results = genai.query_corpus(
-                corpus_name=corpus_name,
+            request = glm.QueryCorpusRequest(
+                name=corpus_name,
                 query=query,
                 results_count=top_k,
-                metadata_filters=[],  # 可以添加过滤条件，如章节范围
             )
+            response = self._client.query_corpus(request=request)
 
             # 解析结果
             search_results = []
-            for item in results:
+            for item in response.relevant_chunks:
                 # 提取元数据
                 chapter_number = 0
                 chapter_title = "未知章节"
 
-                if hasattr(item, 'document') and item.document:
-                    doc = item.document
-                    # 从 custom_metadata 提取
-                    if hasattr(doc, 'custom_metadata'):
-                        for meta in doc.custom_metadata:
-                            if meta.key == "chapter_number":
-                                chapter_number = int(meta.numeric_value)
-                            elif meta.key == "chapter_title":
-                                chapter_title = meta.string_value
-
-                    # 从 display_name 提取（备用）
-                    if chapter_number == 0 and hasattr(doc, 'display_name'):
-                        import re
-                        match = re.search(r'第(\d+)章', doc.display_name)
-                        if match:
-                            chapter_number = int(match.group(1))
-
-                # 提取内容片段
-                content_snippet = ""
+                # 从 chunk 的元数据中提取
                 if hasattr(item, 'chunk') and item.chunk:
                     chunk = item.chunk
+                    # 获取 document 信息
+                    if hasattr(chunk, 'document_metadata'):
+                        doc_meta = chunk.document_metadata
+                        if hasattr(doc_meta, 'custom_metadata'):
+                            for meta in doc_meta.custom_metadata:
+                                if meta.key == "chapter_number":
+                                    chapter_number = int(meta.numeric_value)
+                                elif meta.key == "chapter_title":
+                                    chapter_title = meta.string_value
+
+                    # 提取内容片段
+                    content_snippet = ""
                     if hasattr(chunk, 'data'):
                         if hasattr(chunk.data, 'string_value'):
                             content_snippet = chunk.data.string_value
-                        elif hasattr(chunk.data, 'text'):
-                            content_snippet = chunk.data.text
 
                 # 提取相关度分数
                 relevance_score = 0.0
-                if hasattr(item, 'score'):
-                    relevance_score = float(item.score)
+                if hasattr(item, 'chunk_relevance_score'):
+                    relevance_score = float(item.chunk_relevance_score)
 
                 search_results.append(GeminiSearchResult(
                     chapter_number=chapter_number,
@@ -347,17 +362,18 @@ class GeminiRAGService:
         display_name = self._get_corpus_name(project_id)
 
         try:
-            # 查找 corpus
-            for corpus in genai.list_corpora():
-                if corpus.display_name == display_name:
-                    genai.delete_corpus(name=corpus.name)
-                    logger.info(f"🗑️  删除 Corpus 成功: {corpus.name}")
-                    return True
-
-            logger.warning(f"⚠️  未找到 Corpus: {display_name}")
-            return False
+            # 构建 corpus 路径并删除
+            corpus_path = f"corpora/{display_name}"
+            request = glm.DeleteCorpusRequest(name=corpus_path)
+            self._client.delete_corpus(request=request)
+            logger.info(f"🗑️  删除 Corpus 成功: {corpus_path}")
+            return True
 
         except Exception as e:
+            # 如果 corpus 不存在，也返回成功
+            if "NOT_FOUND" in str(e) or "not found" in str(e).lower():
+                logger.warning(f"⚠️  Corpus 不存在（可能已删除）: {display_name}")
+                return True
             logger.error(f"❌ 删除 Corpus 失败: {e}")
             return False
 
@@ -385,14 +401,17 @@ class GeminiRAGService:
 
         try:
             # 列出该 corpus 下的所有文档
-            documents = genai.list_documents(corpus_name=corpus_name)
+            request = glm.ListDocumentsRequest(parent=corpus_name)
+            documents = self._client.list_documents(request=request)
 
             for doc in documents:
                 # 检查元数据
                 if hasattr(doc, 'custom_metadata'):
                     for meta in doc.custom_metadata:
                         if meta.key == "chapter_number" and int(meta.numeric_value) == chapter_number:
-                            genai.delete_document(name=doc.name)
+                            # 删除文档
+                            delete_request = glm.DeleteDocumentRequest(name=doc.name)
+                            self._client.delete_document(request=delete_request)
                             logger.info(f"🗑️  删除章节成功: 第{chapter_number}章")
                             return True
 
