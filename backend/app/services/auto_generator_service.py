@@ -965,8 +965,30 @@ class AutoGeneratorService:
                         contents.append(full_content)
                         logger.info(f"第 {next_chapter_number} 章版本 {idx+1}: 提取full_content，长度={len(full_content)}")
                     elif "content" in variant and variant["content"]:
-                        contents.append(variant["content"])
-                        logger.info(f"第 {next_chapter_number} 章版本 {idx+1}: 提取content，长度={len(variant['content'])}")
+                        content = variant["content"]
+
+                        # ✅ 同样对content字段进行Markdown清理
+                        if isinstance(content, str):
+                            markdown_patterns = [
+                                r'^#{1,6}\s+',       # 标题
+                                r'\*\*.*?\*\*',      # 粗体
+                                r'__.*?__',          # 粗体
+                                r'\*.*?\*',          # 斜体
+                                r'`.*?`',            # 代码
+                            ]
+                            has_markdown = any(re.search(pattern, content, re.MULTILINE) for pattern in markdown_patterns)
+
+                            if has_markdown:
+                                original_preview = content[:100]
+                                content = strip_markdown_formatting(content)
+                                logger.warning(
+                                    f"第 {next_chapter_number} 章版本 {idx+1}: content字段检测到Markdown标记，已自动清理\n"
+                                    f"  原始预览: {original_preview}...\n"
+                                    f"  清理后预览: {content[:100]}..."
+                                )
+
+                        contents.append(content)
+                        logger.info(f"第 {next_chapter_number} 章版本 {idx+1}: 提取content，长度={len(content)}")
                     else:
                         # 如果没有找到内容字段，使用整个JSON
                         content_str = json.dumps(variant, ensure_ascii=False)
