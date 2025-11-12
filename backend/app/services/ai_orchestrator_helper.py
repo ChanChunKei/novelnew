@@ -1773,11 +1773,21 @@ async def _call_writer_agent(
                     suspicious_count += 1
 
             if suspicious_count >= 2:
-                logger.warning(
-                    f"⚠️ Writer返回的full_content疑似包含planner格式内容（检测到{suspicious_count}个planner关键词）\n"
-                    f"  前200字: {full_content[:200]}"
+                logger.error(
+                    f"❌ Writer返回的full_content包含planner格式内容（检测到{suspicious_count}个planner关键词）\n"
+                    f"  前200字: {full_content[:200]}\n"
+                    f"  这不是章节正文，而是Planner的分析结果"
                 )
-                # 不抛异常，只警告，因为可能是误判
+                # ✅ 加强验证：阻止Planner格式被保存
+                if round_num == 0:
+                    logger.warning("⚠️  第一轮检测到Planner格式，将进入第二轮重新生成...")
+                    continue  # 进入第二轮
+                else:
+                    # ✅ 第二轮还是Planner格式，抛出异常阻止保存
+                    raise ValueError(
+                        f"生成失败：Writer返回的full_content是Planner格式（包含 {planner_keywords[:suspicious_count]}），"
+                        "而不是章节正文。请检查模型输出或prompt配置。"
+                    )
 
             return response
 
