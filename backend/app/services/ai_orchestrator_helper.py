@@ -167,19 +167,21 @@ def _clean_full_content(content: str, chapter_number: int = 0, version_idx: int 
             pass
 
     # 步骤2: 双重转义修复
-    if isinstance(content, str) and ("\\n" in content or "\\t" in content or "\\" in content):
-        try:
-            original_escaped = content
-            content = content.encode('utf-8').decode('unicode_escape')
+    # ✅ 安全地只替换转义序列，不影响中文（与auto_generator_service保持一致）
+    if isinstance(content, str) and ("\\" in content):
+        original_escaped = content
+        # 只替换常见的转义序列，不用 unicode_escape（会破坏中文）
+        content = content.replace("\\n", "\n")
+        content = content.replace("\\t", "\t")
+        content = content.replace("\\r", "\r")
+        content = content.replace('\\"', '"')
+        content = content.replace("\\'", "'")
+        content = content.replace("\\\\", "\\")
 
-            if content != original_escaped:
-                logger.warning(
-                    f"第 {chapter_number} 章版本 {version_idx}: 检测到双重转义，已自动修复\n"
-                    f"  原始: {original_escaped[:80]}...\n"
-                    f"  修复后: {content[:80]}..."
-                )
-        except Exception as e:
-            logger.error(f"第 {chapter_number} 章版本 {version_idx}: 反转义失败: {e}，保持原样")
+        if content != original_escaped:
+            logger.warning(
+                f"第 {chapter_number} 章版本 {version_idx}: 检测到双重转义，已自动修复"
+            )
 
     # 步骤3: Markdown标记清理
     if isinstance(content, str):
@@ -1316,7 +1318,16 @@ async def _generate_with_agent_dialogue_impl(
     )
 
     logger.info(f"思考Agent完成，耗时: {time.time() - planner_start:.2f}秒")
-    
+
+    # ✅ 输出Planner的详细结果
+    logger.info("=" * 80)
+    logger.info("📋 思考Agent输出：")
+    logger.info(f"  分析 (analysis): {planner_result.get('analysis', 'N/A')[:300]}...")
+    logger.info(f"  规划 (plan): {planner_result.get('plan', 'N/A')[:300]}...")
+    logger.info(f"  查询总结 (queries_summary): {planner_result.get('queries_summary', 'N/A')[:200]}...")
+    logger.info(f"  给Writer的建议 (notes_for_writer): {planner_result.get('notes_for_writer', 'N/A')[:200]}...")
+    logger.info("=" * 80)
+
     conversation_history.append({
         "agent": "planner",
         "content": planner_result,
@@ -1353,12 +1364,21 @@ async def _generate_with_agent_dialogue_impl(
         )
 
         logger.info(f"写作Agent完成，耗时: {time.time() - writer_start:.2f}秒")
-        
+
+        # ✅ 输出Writer的详细结果
+        full_content = writer_result.get("full_content", "")
+        logger.info("=" * 80)
+        logger.info(f"✍️ 写作Agent输出（迭代 {iteration + 1}）：")
+        logger.info(f"  字数: {len(full_content)}")
+        logger.info(f"  前500字预览:\n{full_content[:500]}...")
+        logger.info(f"  创作说明 (writing_notes): {writer_result.get('writing_notes', 'N/A')[:300]}")
+        logger.info("=" * 80)
+
         # ✅ 优化：只存储摘要，避免conversation_history膨胀
         writer_summary = {
             "writing_notes": writer_result.get("writing_notes", "")[:500],  # 只保留前500字
-            "word_count": len(writer_result.get("full_content", "")),
-            "preview": writer_result.get("full_content", "")[:200] + "..."  # 只保留前200字预览
+            "word_count": len(full_content),
+            "preview": full_content[:200] + "..."  # 只保留前200字预览
         }
         conversation_history.append({
             "agent": "writer",
@@ -1386,6 +1406,19 @@ async def _generate_with_agent_dialogue_impl(
         )
 
         logger.info(f"审批Agent完成，耗时: {time.time() - reviewer_start:.2f}秒")
+
+        # ✅ 输出Reviewer的详细结果
+        logger.info("=" * 80)
+        logger.info(f"📝 审批Agent输出（迭代 {iteration + 1}）：")
+        logger.info(f"  评分: {reviewer_result.get('score', 'N/A')}/{MIN_APPROVAL_SCORE}")
+        logger.info(f"  是否通过: {'✅ 通过' if reviewer_result.get('approved', False) else '❌ 未通过'}")
+        suggestions = reviewer_result.get('suggestions', [])
+        if suggestions:
+            logger.info(f"  修改建议 ({len(suggestions)}条):")
+            for idx, suggestion in enumerate(suggestions[:5], 1):  # 只显示前5条
+                logger.info(f"    {idx}. {suggestion[:150]}...")
+        logger.info(f"  总体评价: {reviewer_result.get('overall_comment', 'N/A')[:200]}...")
+        logger.info("=" * 80)
 
         conversation_history.append({
             "agent": "reviewer",
@@ -1434,7 +1467,13 @@ async def _generate_with_agent_dialogue_impl(
     )
 
     logger.info(f"总结Agent完成，耗时: {time.time() - summarizer_start:.2f}秒")
-    
+
+    # ✅ 输出Summarizer的详细结果
+    logger.info("=" * 80)
+    logger.info("📄 总结Agent输出：")
+    logger.info(f"  章节摘要: {summarizer_result.get('summary', 'N/A')[:400]}...")
+    logger.info("=" * 80)
+
     conversation_history.append({
         "agent": "summarizer",
         "content": summarizer_result,
