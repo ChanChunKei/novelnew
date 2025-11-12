@@ -81,6 +81,9 @@ def strip_markdown_formatting(text: str) -> str:
     text = re.sub(r'^[\*\-\+]\s+', '', text, flags=re.MULTILINE)
     text = re.sub(r'^\d+\.\s+', '', text, flags=re.MULTILINE)
 
+    # 移除Markdown硬换行：行尾的反斜杠+换行符 (\ + \n)
+    text = re.sub(r'\\\s*\n', '\n', text)
+
     return text
 
 
