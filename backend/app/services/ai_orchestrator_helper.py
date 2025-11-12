@@ -1713,8 +1713,14 @@ async def _call_writer_agent(
                 raise ValueError("生成失败：full_content格式错误（应该是字符串，收到dict）")
 
             # 检查是否包含planner的典型结构关键词（简单启发式检查）
-            planner_keywords = ["analysis:", "plan:", "queries_summary:", "notes_for_writer:"]
-            suspicious_count = sum(1 for kw in planner_keywords if kw in full_content[:500])
+            # 同时检查冒号前后的格式：analysis: 或 "analysis":
+            planner_keywords = ["analysis", "plan", "queries_summary", "notes_for_writer"]
+            suspicious_count = 0
+            for kw in planner_keywords:
+                # 检查多种格式: analysis:, "analysis":
+                if f'{kw}:' in full_content[:500] or f'"{kw}":' in full_content[:500]:
+                    suspicious_count += 1
+
             if suspicious_count >= 2:
                 logger.warning(
                     f"⚠️ Writer返回的full_content疑似包含planner格式内容（检测到{suspicious_count}个planner关键词）\n"
