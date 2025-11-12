@@ -931,6 +931,30 @@ class AutoGeneratorService:
                                 # 不是JSON，保持原样
                                 pass
 
+                        # ✅ 检测Planner格式：防止错误地保存Planner的分析结果
+                        if isinstance(full_content, str):
+                            content_stripped = full_content.strip()
+                            if content_stripped.startswith("{") and content_stripped.endswith("}"):
+                                try:
+                                    parsed = json.loads(content_stripped)
+                                    # 检查是否包含Planner的典型字段
+                                    planner_fields = ['analysis', 'plan', 'queries_summary', 'notes_for_writer']
+                                    has_planner = sum(1 for f in planner_fields if f in parsed)
+
+                                    if has_planner >= 3:
+                                        logger.error(
+                                            f"❌ 第 {next_chapter_number} 章版本 {idx+1}: "
+                                            f"full_content是Planner格式而非章节正文！"
+                                            f"包含字段: {[f for f in planner_fields if f in parsed]}"
+                                        )
+                                        raise ValueError(
+                                            f"第 {next_chapter_number} 章版本 {idx+1} 生成失败："
+                                            f"full_content包含Planner格式内容（{has_planner}个planner字段），拒绝保存。"
+                                            f"这可能是Writer Agent错误地返回了Planner的分析结果。"
+                                        )
+                                except json.JSONDecodeError:
+                                    pass  # 不是JSON，继续正常流程
+
                         # ✅ 处理双重转义：安全地只替换转义序列，不影响中文
                         if isinstance(full_content, str) and ("\\" in full_content):
                             original_escaped = full_content
