@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..config.ai_function_config import AIFunctionType
 from ..services.ai_orchestrator import AIOrchestrator
 from ..services.llm_service import LLMService
-from .auto_generator_service import strip_markdown_formatting
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +85,55 @@ async def get_agent_prompt_from_db(
         return get_agent_prompt(agent_type)
 
 
+def _strip_markdown_formatting(text: str) -> str:
+    """
+    移除文本中的Markdown格式标记，保留纯文本内容
+
+    处理的标记：
+    - 标题：## 、### 等
+    - 粗体：**文本** 或 __文本__
+    - 斜体：*文本* 或 _文本_
+    - 代码：`文本`
+    - 链接：[文本](url)
+    - 行尾反斜杠+换行符（Markdown硬换行）
+    - 其他常见标记
+    """
+    if not text:
+        return text
+
+    # 移除标题标记（##、###等），保留文本
+    text = re.sub(r'^#{1,6}\s+', '', text, flags=re.MULTILINE)
+
+    # 移除粗体标记 **text** 或 __text__
+    text = re.sub(r'\*\*(.+?)\*\*', r'\1', text)
+    text = re.sub(r'__(.+?)__', r'\1', text)
+
+    # 移除斜体标记 *text* 或 _text_（要在粗体之后处理）
+    text = re.sub(r'\*(.+?)\*', r'\1', text)
+    text = re.sub(r'(?<!\w)_(.+?)_(?!\w)', r'\1', text)
+
+    # 移除行内代码标记 `code`
+    text = re.sub(r'`(.+?)`', r'\1', text)
+
+    # 移除链接，保留文本 [text](url) -> text
+    text = re.sub(r'\[(.+?)\]\(.+?\)', r'\1', text)
+
+    # 移除图片 ![alt](url) -> alt
+    text = re.sub(r'!\[(.+?)\]\(.+?\)', r'\1', text)
+
+    # 移除引用标记 >
+    text = re.sub(r'^>\s+', '', text, flags=re.MULTILINE)
+
+    # 移除列表标记 - 或 * 或 数字.
+    text = re.sub(r'^[\*\-\+]\s+', '', text, flags=re.MULTILINE)
+    text = re.sub(r'^\d+\.\s+', '', text, flags=re.MULTILINE)
+
+    # 移除Markdown硬换行：行尾的反斜杠+换行符 (\ + \n)
+    text = re.sub(r'\\\s*\n', '\n', text)
+
+    return text
+
+
 def _clean_full_content(content: str, chapter_number: int = 0, version_idx: int = 0) -> str:
     """
     清理full_content，应用与auto_generator相同的清理流程
@@ -134,7 +183,7 @@ def _clean_full_content(content: str, chapter_number: int = 0, version_idx: int 
 
     # 步骤3: Markdown标记清理
     if isinstance(content, str):
-        cleaned = strip_markdown_formatting(content)
+        cleaned = _strip_markdown_formatting(content)
 
         if cleaned != original_content:
             logger.warning(
@@ -1581,16 +1630,30 @@ async def _call_writer_agent(
                 "content": json.dumps(tool_results, ensure_ascii=False)
             })
         else:
-            # 清理full_content后返回
-            if "full_content" in response:
-                response["full_content"] = _clean_full_content(
-                    response["full_content"],
-                    chapter_number=chapter_number,
-                    version_idx=1
+            # ✅ 验证返回格式：必须包含full_content字段
+            if "full_content" not in response or not response["full_content"]:
+                logger.error(
+                    f"❌ 写作Agent返回格式错误（第{round_num + 1}轮）：缺少full_content字段\n"
+                    f"  返回的字段: {list(response.keys())}\n"
+                    f"  这可能是LLM误解了要求，返回了错误的JSON格式（如planner格式）"
                 )
+                # 如果是第一轮且没有full_content，继续到第二轮强制JSON格式
+                if round_num == 0:
+                    logger.warning("⚠️ 将进入第2轮，强制JSON格式重新生成...")
+                    continue
+                else:
+                    # 第二轮还是错误，返回错误信息
+                    return {"full_content": f"生成失败：返回格式错误，收到的字段为 {list(response.keys())}，期望包含 full_content 字段"}
+
+            # 清理full_content后返回
+            response["full_content"] = _clean_full_content(
+                response["full_content"],
+                chapter_number=chapter_number,
+                version_idx=1
+            )
             return response
 
-    return {"full_content": "生成失败"}
+    return {"full_content": "生成失败：未能在2轮内生成有效内容"}
 
 
 async def _call_reviewer_agent(
