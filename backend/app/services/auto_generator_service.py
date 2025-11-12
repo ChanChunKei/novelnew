@@ -926,20 +926,22 @@ class AutoGeneratorService:
                                 # 不是JSON，保持原样
                                 pass
 
-                        # ✅ 处理双重转义：如果内容包含 \\n、\\t 等转义序列，进行反转义
-                        if isinstance(full_content, str) and ("\\n" in full_content or "\\t" in full_content):
-                            # 检测是否是错误的双重转义（不是代码块中的转义）
-                            # 如果内容以 ## 开头（Markdown标题）且包含 \n，很可能是错误转义
-                            if full_content.strip().startswith("#") or full_content.count("\\n") > 5:
-                                try:
-                                    # 使用 encode().decode('unicode_escape') 进行反转义
-                                    # 但要小心处理非ASCII字符
-                                    unescaped = full_content.encode().decode('unicode_escape')
-                                    logger.warning(f"第 {next_chapter_number} 章版本 {idx+1}: 检测到双重转义，已自动修复")
-                                    full_content = unescaped
-                                except Exception as e:
-                                    logger.error(f"反转义失败: {e}，保持原样")
-                                    pass
+                        # ✅ 处理双重转义：无条件反转义，避免漏检
+                        if isinstance(full_content, str) and ("\\n" in full_content or "\\t" in full_content or "\\" in full_content):
+                            try:
+                                original_escaped = full_content
+                                # 使用 encode().decode('unicode_escape') 进行反转义
+                                full_content = full_content.encode('utf-8').decode('unicode_escape')
+
+                                if full_content != original_escaped:
+                                    logger.warning(
+                                        f"第 {next_chapter_number} 章版本 {idx+1}: 检测到双重转义，已自动修复\n"
+                                        f"  原始: {original_escaped[:80]}...\n"
+                                        f"  修复后: {full_content[:80]}..."
+                                    )
+                            except Exception as e:
+                                logger.error(f"第 {next_chapter_number} 章版本 {idx+1}: 反转义失败: {e}，保持原样")
+                                pass
 
                         # ✅ 强制清理Markdown标记：无论是否检测到，都进行清理（防止漏检）
                         if isinstance(full_content, str):
@@ -958,6 +960,22 @@ class AutoGeneratorService:
                         logger.info(f"第 {next_chapter_number} 章版本 {idx+1}: 提取full_content，长度={len(full_content)}")
                     elif "content" in variant and variant["content"]:
                         content = variant["content"]
+
+                        # ✅ 处理双重转义：无条件反转义，避免漏检
+                        if isinstance(content, str) and ("\\n" in content or "\\t" in content or "\\" in content):
+                            try:
+                                original_escaped = content
+                                content = content.encode('utf-8').decode('unicode_escape')
+
+                                if content != original_escaped:
+                                    logger.warning(
+                                        f"第 {next_chapter_number} 章版本 {idx+1}: content字段检测到双重转义，已自动修复\n"
+                                        f"  原始: {original_escaped[:80]}...\n"
+                                        f"  修复后: {content[:80]}..."
+                                    )
+                            except Exception as e:
+                                logger.error(f"第 {next_chapter_number} 章版本 {idx+1}: content字段反转义失败: {e}")
+                                pass
 
                         # ✅ 强制清理Markdown标记：无论是否检测到，都进行清理（防止漏检）
                         if isinstance(content, str):
