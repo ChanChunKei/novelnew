@@ -6,6 +6,7 @@ AI Orchestrator 辅助函数
 import asyncio
 import logging
 import json
+import os
 import time
 from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
@@ -763,35 +764,85 @@ async def _tool_search_chapters(
     project_id: Optional[str],
     arguments: Dict
 ) -> str:
-    """搜索历史章节"""
+    """
+    搜索历史章节
+
+    支持三种检索方式：
+    1. Gemini Semantic Retrieval（RAG_PROVIDER=gemini）
+    2. libsql 向量库（RAG_PROVIDER=libsql）
+    3. 数据库关键词搜索（fallback）
+    """
     keyword = arguments.get("keyword")
     limit = arguments.get("limit", 3)
 
     if not project_id:
         return "错误：缺少project_id"
 
-    # 方式1：使用向量检索（如果可用）
+    # 方式1：Gemini Semantic Retrieval（优先，检查配置）
+    # ✅ 修改：从数据库或环境变量读取配置
     try:
-        from ..services.vector_store_service import VectorStoreService
-        vector_service = VectorStoreService()
+        from ..repositories.system_config_repository import SystemConfigRepository
+        from ..services.gemini_rag_service import GeminiRAGService
 
-        results = await vector_service.search_chunks(
-            project_id=project_id,
-            query_text=keyword,
-            top_k=limit
-        )
+        repo = SystemConfigRepository(db_session)
+        rag_provider_record = await repo.get_by_key("rag.provider")
+        rag_provider = rag_provider_record.value if rag_provider_record else os.getenv("RAG_PROVIDER", "libsql")
 
-        if results:
-            formatted_results = []
-            for chunk in results:
-                formatted_results.append(
-                    f"【第{chunk.chapter_number}章】{chunk.chapter_title or ''}\n"
-                    f"相关度: {chunk.score:.2f}\n"
-                    f"内容片段:\n{chunk.content[:500]}...\n"
-                )
-            return "\n\n".join(formatted_results)
+        if rag_provider.strip().lower() == "gemini":
+            # ✅ 修改：传递 db_session 而不是 api_key
+            gemini_service = GeminiRAGService(db_session=db_session)
+
+            results = await gemini_service.search(
+                project_id=project_id,
+                query=keyword,
+                top_k=limit
+            )
+
+            if results:
+                formatted_results = []
+                for item in results:
+                    formatted_results.append(
+                        f"【第{item.chapter_number}章】{item.chapter_title}\n"
+                        f"相关度: {item.relevance_score:.2f}\n"
+                        f"内容片段:\n{item.content_snippet}...\n"
+                    )
+                logger.info(f"✅ Gemini RAG 搜索成功: query='{keyword}', 结果数={len(results)}")
+                return "\n\n".join(formatted_results)
+            else:
+                logger.warning(f"⚠️ Gemini RAG 搜索无结果，回退到数据库搜索")
     except Exception as e:
-        logger.warning(f"向量检索失败，尝试数据库查询: {str(e)}")
+        logger.warning(f"⚠️ Gemini RAG 搜索失败，回退到数据库搜索: {str(e)}")
+
+    # 方式2：libsql 向量检索（如果配置了）
+    if settings.rag_provider == "libsql" and settings.vector_store_enabled:
+        try:
+            from ..services.vector_store_service import VectorStoreService
+            from ..services.llm_service import LLMService
+
+            vector_service = VectorStoreService()
+            llm_service = LLMService(db=db_session)
+
+            # ✅ 修复：需要先将查询文本转为向量
+            keyword_embedding = await llm_service.get_embedding(keyword)
+
+            results = await vector_service.query_chunks(
+                project_id=project_id,
+                embedding=keyword_embedding,  # ✅ 传递向量而不是文本
+                top_k=limit
+            )
+
+            if results:
+                formatted_results = []
+                for chunk in results:
+                    formatted_results.append(
+                        f"【第{chunk.chapter_number}章】{chunk.chapter_title or ''}\n"
+                        f"相关度: {chunk.score:.2f}\n"
+                        f"内容片段:\n{chunk.content[:500]}...\n"
+                    )
+                logger.info(f"✅ libsql 向量搜索成功: query='{keyword}', 结果数={len(results)}")
+                return "\n\n".join(formatted_results)
+        except Exception as e:
+            logger.warning(f"⚠️ libsql 向量检索失败，回退到数据库搜索: {str(e)}")
 
     # 方式2：数据库全文搜索（fallback）
     try:
@@ -1040,6 +1091,7 @@ async def _tool_get_recent_chapters(
 
     try:
         from sqlalchemy import select, and_
+        from sqlalchemy.orm import selectinload
         from ..models.novel import Chapter
 
         start_chapter = max(1, current_chapter - count)
@@ -1051,6 +1103,8 @@ async def _tool_get_recent_chapters(
                 Chapter.chapter_number >= start_chapter,
                 Chapter.chapter_number <= end_chapter
             )
+        ).options(
+            selectinload(Chapter.selected_version)  # 预加载selected_version避免N+1查询
         ).order_by(Chapter.chapter_number)
 
         result = await db_session.execute(stmt)
@@ -1061,9 +1115,11 @@ async def _tool_get_recent_chapters(
 
         formatted_results = []
         for ch in chapters:
+            # Chapter模型没有title和content字段，需要通过selected_version获取
+            content = ch.selected_version.content if ch.selected_version else "内容未找到"
             formatted_results.append(
-                f"=== 第{ch.chapter_number}章：{ch.title or ''} ===\n"
-                f"{ch.content or ''}\n"
+                f"=== 第{ch.chapter_number}章 ===\n"
+                f"{content}\n"
             )
         return "\n\n".join(formatted_results)
 
@@ -1173,14 +1229,15 @@ async def _tool_find_foreshadowing(
                     snippet = content[start_pos:end_pos]
                     found_keywords.append((keyword, snippet))
 
-            # 也检查章节摘要
-            if ch.summary:
+            # 也检查章节摘要（Chapter.real_summary）
+            if ch.real_summary:
                 for keyword in foreshadowing_keywords:
-                    if keyword in ch.summary:
-                        found_keywords.append((keyword, f"摘要：{ch.summary}"))
+                    if keyword in ch.real_summary:
+                        found_keywords.append((keyword, f"摘要：{ch.real_summary}"))
 
             if found_keywords:
-                chapter_result = f"【第{ch.chapter_number}章】{ch.title or ''}\n"
+                # Chapter模型没有title字段，title在ChapterOutline中
+                chapter_result = f"【第{ch.chapter_number}章】\n"
                 for kw, snippet in found_keywords[:3]:  # 最多显示3个
                     chapter_result += f"  含'{kw}'：...{snippet}...\n"
                 results.append(chapter_result)
@@ -1699,6 +1756,29 @@ async def _call_writer_agent(
                 chapter_number=chapter_number,
                 version_idx=1
             )
+
+            # ✅ 额外验证：确保full_content不是planner格式
+            full_content = response["full_content"]
+            if isinstance(full_content, dict):
+                logger.error(f"❌ Writer返回的full_content是dict而不是字符串！可能误返回了planner格式")
+                raise ValueError("生成失败：full_content格式错误（应该是字符串，收到dict）")
+
+            # 检查是否包含planner的典型结构关键词（简单启发式检查）
+            # 同时检查冒号前后的格式：analysis: 或 "analysis":
+            planner_keywords = ["analysis", "plan", "queries_summary", "notes_for_writer"]
+            suspicious_count = 0
+            for kw in planner_keywords:
+                # 检查多种格式: analysis:, "analysis":
+                if f'{kw}:' in full_content[:500] or f'"{kw}":' in full_content[:500]:
+                    suspicious_count += 1
+
+            if suspicious_count >= 2:
+                logger.warning(
+                    f"⚠️ Writer返回的full_content疑似包含planner格式内容（检测到{suspicious_count}个planner关键词）\n"
+                    f"  前200字: {full_content[:200]}"
+                )
+                # 不抛异常，只警告，因为可能是误判
+
             return response
 
     # ✅ 两轮都失败，抛出异常

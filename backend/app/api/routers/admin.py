@@ -25,6 +25,7 @@ from ...schemas.novel import (
     NovelSectionType,
 )
 from ...schemas.user import AdminCreate, PasswordChangeRequest, User as UserSchema
+from ...schemas.rag_test import GeminiRAGTestRequest, GeminiRAGTestResult
 from ...services.auth_service import AuthService
 from ...services.admin_setting_service import AdminSettingService
 from ...services.config_service import ConfigService
@@ -450,3 +451,130 @@ async def change_password(
 ) -> None:
     await service.change_password(current_admin.username, payload.old_password, payload.new_password)
     logger.info("管理员 %s 修改密码", current_admin.username)
+
+
+@router.post("/test-gemini-rag", response_model=GeminiRAGTestResult)
+async def test_gemini_rag(
+    request: GeminiRAGTestRequest = GeminiRAGTestRequest(),
+    session: AsyncSession = Depends(get_session),
+    _: None = Depends(get_current_admin),
+) -> GeminiRAGTestResult:
+    """
+    测试 Gemini RAG 配置是否正确
+
+    测试项：
+    1. 检查 API Key 是否配置
+    2. 验证 API Key 是否有效（尝试列出 Corpus）
+    3. 检查 RAG Provider 配置
+    4. 可选：测试指定项目的 Corpus 访问
+
+    需要管理员权限
+    """
+    try:
+        from ...services.gemini_rag_service import GeminiRAGService
+        from ...repositories.system_config_repository import SystemConfigRepository
+        import os
+
+        repo = SystemConfigRepository(session)
+
+        # 1. 检查 rag.provider 配置
+        rag_provider_record = await repo.get_by_key("rag.provider")
+        rag_provider = rag_provider_record.value if rag_provider_record else os.getenv("RAG_PROVIDER", "libsql")
+
+        # 2. 检查 API Key 是否配置
+        api_key_record = await repo.get_by_key("gemini.api_key")
+        api_key = api_key_record.value if api_key_record else os.getenv("GEMINI_API_KEY")
+
+        api_key_configured = bool(api_key and api_key.strip())
+
+        if not api_key_configured:
+            return GeminiRAGTestResult(
+                success=False,
+                message="未配置 Gemini API Key",
+                api_key_configured=False,
+                api_key_valid=False,
+                provider=rag_provider.strip().lower(),
+                error_detail="请在系统配置中设置 gemini.api_key"
+            )
+
+        # 3. 测试 API Key 是否有效
+        try:
+            import google.generativeai as genai
+            genai.configure(api_key=api_key.strip())
+
+            # 尝试列出 Corpus（测试权限）
+            corpora_list = list(genai.list_corpora())
+            corpus_count = len(corpora_list)
+
+            api_key_valid = True
+            test_message = f"✅ Gemini API Key 有效！已连接到 Google AI，找到 {corpus_count} 个 Corpus"
+
+            # 4. 可选：测试指定项目的 Corpus 访问
+            corpus_accessible = None
+            if request.test_project_id:
+                gemini_service = GeminiRAGService(db_session=session)
+                corpus_name = await gemini_service.ensure_corpus(request.test_project_id)
+
+                if corpus_name:
+                    corpus_accessible = True
+                    test_message += f"\n✅ 项目 {request.test_project_id} 的 Corpus 可访问: {corpus_name}"
+                else:
+                    corpus_accessible = False
+                    test_message += f"\n⚠️ 项目 {request.test_project_id} 的 Corpus 创建/访问失败"
+
+            logger.info("管理员测试 Gemini RAG: 成功")
+
+            return GeminiRAGTestResult(
+                success=True,
+                message=test_message,
+                api_key_configured=True,
+                api_key_valid=True,
+                provider=rag_provider.strip().lower(),
+                corpus_accessible=corpus_accessible
+            )
+
+        except ImportError:
+            logger.error("google-generativeai 依赖未安装")
+            return GeminiRAGTestResult(
+                success=False,
+                message="❌ 缺少 google-generativeai 依赖",
+                api_key_configured=True,
+                api_key_valid=False,
+                provider=rag_provider.strip().lower(),
+                error_detail="请运行: pip install google-generativeai"
+            )
+
+        except Exception as e:
+            error_msg = str(e)
+            logger.error(f"Gemini API Key 验证失败: {error_msg}")
+
+            # 判断是权限问题还是Key无效
+            if "PERMISSION_DENIED" in error_msg or "API key not valid" in error_msg:
+                return GeminiRAGTestResult(
+                    success=False,
+                    message="❌ Gemini API Key 无效或权限不足",
+                    api_key_configured=True,
+                    api_key_valid=False,
+                    provider=rag_provider.strip().lower(),
+                    error_detail=f"错误详情: {error_msg}"
+                )
+            else:
+                return GeminiRAGTestResult(
+                    success=False,
+                    message=f"❌ Gemini 连接测试失败",
+                    api_key_configured=True,
+                    api_key_valid=False,
+                    provider=rag_provider.strip().lower(),
+                    error_detail=f"错误详情: {error_msg}"
+                )
+
+    except Exception as e:
+        logger.error(f"测试 Gemini RAG 时发生异常: {e}", exc_info=True)
+        return GeminiRAGTestResult(
+            success=False,
+            message=f"❌ 测试过程发生异常",
+            api_key_configured=False,
+            api_key_valid=False,
+            provider="unknown",
+            error_detail=str(e)
+        )
