@@ -6,17 +6,61 @@
 - 配置是否正确
 - 有哪些项目使用了 Gemini RAG
 - Corpus 创建情况
+
+使用方法：
+  python3 check_gemini_status.py [数据库路径]
+
+示例：
+  python3 check_gemini_status.py                                    # 自动检测
+  python3 check_gemini_status.py /path/to/arboris.db              # 指定路径
 """
 
 import sqlite3
 import sys
 import os
+from pathlib import Path
 
-# 设置环境变量以读取配置
-sys.path.insert(0, '/home/user/novelnew/backend')
-os.environ.setdefault('DB_PROVIDER', 'sqlite')
+def find_database():
+    """自动查找数据库文件"""
+    # 可能的路径
+    candidates = [
+        "backend/storage/arboris.db",
+        "storage/arboris.db",
+        "../storage/arboris.db",
+        "arboris.db",
+        os.path.expanduser("~/arboris.db"),
+    ]
 
-db_path = "/home/user/novelnew/backend/storage/arboris.db"
+    # 从当前目录开始查找
+    current = Path.cwd()
+    for candidate in candidates:
+        db_file = current / candidate
+        if db_file.exists():
+            return str(db_file.absolute())
+
+    # 向上查找项目根目录
+    for _ in range(3):
+        current = current.parent
+        for candidate in candidates:
+            db_file = current / candidate
+            if db_file.exists():
+                return str(db_file.absolute())
+
+    return None
+
+# 获取数据库路径
+if len(sys.argv) > 1:
+    db_path = sys.argv[1]
+else:
+    db_path = find_database()
+    if not db_path:
+        print("❌ 未找到数据库文件")
+        print()
+        print("请指定数据库路径：")
+        print("  python3 check_gemini_status.py /path/to/arboris.db")
+        print()
+        print("或者确保在项目目录下运行此脚本")
+        sys.exit(1)
 
 def check_database_config():
     """检查数据库配置"""

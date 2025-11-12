@@ -1,9 +1,28 @@
 #!/usr/bin/env python3
-"""Check Gemini configuration in database"""
+"""
+Check Gemini configuration in database
+
+使用方法：
+  python3 check_config.py [数据库路径]
+"""
 
 import sqlite3
+import sys
+from pathlib import Path
 
-db_path = "/home/user/novelnew/backend/storage/arboris.db"
+def find_database():
+    """自动查找数据库"""
+    candidates = ["backend/storage/arboris.db", "storage/arboris.db", "arboris.db"]
+    for candidate in candidates:
+        db_file = Path.cwd() / candidate
+        if db_file.exists():
+            return str(db_file)
+    return None
+
+db_path = sys.argv[1] if len(sys.argv) > 1 else find_database()
+if not db_path:
+    print("❌ 未找到数据库，请指定路径：python3 check_config.py /path/to/arboris.db")
+    sys.exit(1)
 
 conn = sqlite3.connect(db_path)
 cursor = conn.cursor()

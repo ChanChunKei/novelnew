@@ -1,13 +1,38 @@
 #!/usr/bin/env python3
-"""Insert Gemini configuration into database"""
+"""
+Insert Gemini configuration into database
+
+使用方法：
+  python3 insert_config.py [数据库路径] [API_KEY] [PROVIDER]
+
+示例：
+  python3 insert_config.py                                          # 使用默认值
+  python3 insert_config.py /path/to/db.db                          # 指定数据库
+  python3 insert_config.py /path/to/db.db AIzaSy... gemini        # 全部指定
+"""
 
 import sqlite3
+import sys
+from pathlib import Path
 
-db_path = "/home/user/novelnew/backend/storage/arboris.db"
+def find_database():
+    """自动查找数据库"""
+    candidates = ["backend/storage/arboris.db", "storage/arboris.db", "arboris.db"]
+    for candidate in candidates:
+        db_file = Path.cwd() / candidate
+        if db_file.exists():
+            return str(db_file)
+    return None
 
-# Configuration values
-API_KEY = "AIzaSyA5t2XnnCMsCg7SE-odHhX1o5gHIxX2kBQ"
-PROVIDER = "gemini"
+# 解析参数
+db_path = sys.argv[1] if len(sys.argv) > 1 else find_database()
+API_KEY = sys.argv[2] if len(sys.argv) > 2 else "AIzaSyA5t2XnnCMsCg7SE-odHhX1o5gHIxX2kBQ"
+PROVIDER = sys.argv[3] if len(sys.argv) > 3 else "gemini"
+
+if not db_path:
+    print("❌ 未找到数据库，请指定路径")
+    print("使用方法：python3 insert_config.py /path/to/arboris.db")
+    sys.exit(1)
 
 conn = sqlite3.connect(db_path)
 cursor = conn.cursor()
