@@ -909,8 +909,9 @@ class AutoGeneratorService:
                     logger.debug(f"Failed to parse JSON response, using raw content: {e}")
                     raw_versions.append({"content": normalized})
 
-            # 提取full_content字段
+            # ✅ 提取full_content和summary字段（如果是3Agent模式生成的）
             contents = []
+            summaries = []  # ✅ 新增：保存3Agent模式生成的summary
             for idx, variant in enumerate(raw_versions):
                 if isinstance(variant, dict):
                     # 优先提取full_content字段
@@ -959,7 +960,15 @@ class AutoGeneratorService:
                                 )
 
                         contents.append(full_content)
-                        logger.info(f"第 {next_chapter_number} 章版本 {idx+1}: 提取full_content，长度={len(full_content)}")
+
+                        # ✅ 新增：提取3Agent模式生成的summary（如果有）
+                        agent_summary = variant.get("summary", "")
+                        summaries.append(agent_summary)
+
+                        logger.info(
+                            f"第 {next_chapter_number} 章版本 {idx+1}: 提取full_content，长度={len(full_content)}"
+                            + (f"，已提取3Agent summary" if agent_summary else "")
+                        )
                     elif "content" in variant and variant["content"]:
                         content = variant["content"]
 
@@ -993,15 +1002,22 @@ class AutoGeneratorService:
                                 )
 
                         contents.append(content)
+
+                        # ✅ 新增：尝试提取summary（传统模式可能没有）
+                        agent_summary = variant.get("summary", "")
+                        summaries.append(agent_summary)
+
                         logger.info(f"第 {next_chapter_number} 章版本 {idx+1}: 提取content，长度={len(content)}")
                     else:
                         # 如果没有找到内容字段，使用整个JSON
                         content_str = json.dumps(variant, ensure_ascii=False)
                         contents.append(content_str)
+                        summaries.append("")  # ✅ 没有summary
                         logger.warning(f"第 {next_chapter_number} 章版本 {idx+1}: 未找到full_content或content字段，使用完整JSON")
                 else:
                     logger.info(f"第 {next_chapter_number} 章版本 {idx+1}: variant不是dict，直接转字符串")
                     contents.append(str(variant))
+                    summaries.append("")  # ✅ 没有summary
 
             # 保存版本
             await novel_service.replace_chapter_versions(chapter, contents, None)
@@ -1094,9 +1110,13 @@ class AutoGeneratorService:
                             blueprint_dict, llm_service
                         )
                     else:
-                        # 基础模式：只生成摘要（原有逻辑）
+                        # ✅ 基础模式：使用3Agent已生成的summary（如果有），否则重新生成
+                        # 获取选中版本的summary（如果是3Agent模式）
+                        agent_summary = summaries[selected_version_index] if selected_version_index < len(summaries) else ""
+
                         await cls._process_basic_mode(
-                            db, task, chapter_obj, llm_service
+                            db, task, chapter_obj, llm_service,
+                            agent_generated_summary=agent_summary  # ✅ 传递3Agent生成的summary
                         )
 
                     # 创意功能分析已移除（角色、世界观现在保存在 Volume 快照中）
@@ -2053,15 +2073,32 @@ class AutoGeneratorService:
         db: AsyncSession,
         task: AutoGeneratorTask,
         chapter: Chapter,
-        llm_service: "LLMService"
+        llm_service: "LLMService",
+        agent_generated_summary: str = ""  # ✅ 新增：3Agent模式已生成的summary
     ):
         """基础模式：只生成摘要
+
+        ✅ 优化：如果agent_generated_summary有值（3Agent模式），直接使用，避免重复生成
 
         注意：此方法不会自己commit，由调用者控制事务边界
         """
         # 获取选中版本的内容
         if not chapter.selected_version:
             logger.warning(f"章节 {chapter.chapter_number} 没有选中版本，跳过摘要生成")
+            return
+
+        # ✅ 新增：如果3Agent模式已生成summary，直接使用
+        if agent_generated_summary:
+            chapter.real_summary = agent_generated_summary
+            logger.info(
+                f"✅ 第 {chapter.chapter_number} 章：使用3Agent Summarizer生成的摘要，跳过重复生成"
+            )
+            await cls._log(
+                db,
+                task.id,
+                "success",
+                f"第 {chapter.chapter_number} 章：使用3Agent生成的摘要"
+            )
             return
 
         content = chapter.selected_version.content

@@ -737,16 +737,14 @@ async def _execute_tools(
         try:
             if function_name == "search_chapters":
                 return await _tool_search_chapters(db_session, project_id, arguments)
-            elif function_name == "get_character_state":
-                return await _tool_get_character_state(db_session, project_id, arguments)
-            elif function_name == "get_world_setting":
-                return await _tool_get_world_setting(db_session, project_id, arguments)
-            elif function_name == "get_recent_chapters":
-                return await _tool_get_recent_chapters(db_session, project_id, arguments)
             elif function_name == "check_plot_consistency":
                 return await _tool_check_plot_consistency(db_session, project_id, arguments)
             elif function_name == "find_foreshadowing":
                 return await _tool_find_foreshadowing(db_session, project_id, arguments)
+            # ✅ 已移除冗余工具：get_character_state, get_world_setting, get_recent_chapters
+            # 这些信息已在上下文的 volumes_snapshot 和 previous_chapters_text 中提供
+            elif function_name in ["get_character_state", "get_world_setting", "get_recent_chapters"]:
+                return f"⚠️ 工具 {function_name} 已废弃。请使用上下文中的 volumes_snapshot 或 previous_chapters_text 获取相关信息。"
             else:
                 return f"错误：未知工具 {function_name}"
         except Exception as e:
@@ -1484,13 +1482,20 @@ async def _generate_with_agent_dialogue_impl(
     total_time = time.time() - start_time
     iterations = len([h for h in conversation_history if h["agent"] == "writer"])
 
+    # ✅ 优化：更健壮的final_score提取逻辑
+    final_score = 0
+    for item in reversed(conversation_history):
+        if item.get("agent") == "reviewer":
+            final_score = item.get("content", {}).get("score", 0)
+            break
+
     result = {
         "full_content": final_content,
         "summary": summarizer_result.get("summary", ""),
         "metadata": {
             "conversation_history": conversation_history,
             "iterations": iterations,
-            "final_score": conversation_history[-2].get("content", {}).get("score", 0) if len(conversation_history) >= 2 else 0,
+            "final_score": final_score,  # ✅ 使用更健壮的提取逻辑
             "total_time_seconds": round(total_time, 2)
         }
     }
@@ -1681,8 +1686,12 @@ async def _call_writer_agent(
                     logger.warning("⚠️ 将进入第2轮，强制JSON格式重新生成...")
                     continue
                 else:
-                    # 第二轮还是错误，返回错误信息
-                    return {"full_content": f"生成失败：返回格式错误，收到的字段为 {list(response.keys())}，期望包含 full_content 字段"}
+                    # ✅ 第二轮还是错误，抛出异常而不是返回错误文本
+                    logger.error("❌ Writer Agent两轮都未生成有效的full_content，终止生成")
+                    raise ValueError(
+                        f"生成失败：Writer返回格式错误，收到的字段为 {list(response.keys())}，"
+                        f"期望包含 full_content 字段"
+                    )
 
             # 清理full_content后返回
             response["full_content"] = _clean_full_content(
@@ -1692,7 +1701,9 @@ async def _call_writer_agent(
             )
             return response
 
-    return {"full_content": "生成失败：未能在2轮内生成有效内容"}
+    # ✅ 两轮都失败，抛出异常
+    logger.error("❌ Writer Agent在2轮内都未生成有效内容，终止生成")
+    raise ValueError("生成失败：Writer未能在2轮内生成有效内容")
 
 
 async def _call_reviewer_agent(
@@ -2072,6 +2083,15 @@ async def _generate_outline_with_agents_impl(
 
     logger.info(f"规划Agent完成，耗时: {time.time() - planner_start:.2f}秒")
 
+    # ✅ 添加详细日志输出
+    logger.info("=" * 80)
+    logger.info("📋 大纲规划Agent输出：")
+    logger.info(f"  分析: {planner_result.get('analysis', 'N/A')[:300]}...")
+    logger.info(f"  卷名建议: {planner_result.get('volume_title_suggestion', 'N/A')}")
+    logger.info(f"  章节规划: {planner_result.get('chapter_plan', {})}")
+    logger.info(f"  节奏: {planner_result.get('rhythm', 'N/A')}")
+    logger.info("=" * 80)
+
     conversation_history.append({
         "agent": "outline_planner",
         "content": planner_result,
@@ -2108,6 +2128,18 @@ async def _generate_outline_with_agents_impl(
 
         logger.info(f"写作Agent完成，耗时: {time.time() - writer_start:.2f}秒")
 
+        # ✅ 添加详细日志输出
+        logger.info("=" * 80)
+        logger.info(f"📝 大纲写作Agent输出（迭代 {iteration + 1}）：")
+        logger.info(f"  卷名: {writer_result.get('volume_title', 'N/A')}")
+        logger.info(f"  章节数: {len(writer_result.get('chapters', []))}")
+        logger.info(f"  角色数: {len(writer_result.get('characters', []))}")
+        logger.info(f"  关系数: {len(writer_result.get('relationships', []))}")
+        logger.info(f"  前3章预览:")
+        for ch in writer_result.get('chapters', [])[:3]:
+            logger.info(f"    第{ch.get('chapter_number')}章 - {ch.get('title')}: {ch.get('summary', '')[:100]}...")
+        logger.info("=" * 80)
+
         conversation_history.append({
             "agent": "outline_writer",
             "iteration": iteration + 1,
@@ -2138,6 +2170,26 @@ async def _generate_outline_with_agents_impl(
 
         logger.info(f"审批Agent完成，耗时: {time.time() - reviewer_start:.2f}秒")
 
+        # ✅ 添加详细日志输出
+        score = reviewer_result.get("score", 0)
+        approved = reviewer_result.get("approved", False)
+        suggestions = reviewer_result.get("suggestions", [])
+        issues = reviewer_result.get("issues", [])
+
+        logger.info("=" * 80)
+        logger.info(f"📝 大纲审批Agent输出（迭代 {iteration + 1}）：")
+        logger.info(f"  评分: {score}/{min_score_threshold}")
+        logger.info(f"  是否通过: {'✅ 通过' if approved else '❌ 未通过'}")
+        if issues:
+            logger.info(f"  发现问题 ({len(issues)}条):")
+            for idx, issue in enumerate(issues[:3], 1):
+                logger.info(f"    {idx}. {issue[:100]}...")
+        if suggestions:
+            logger.info(f"  修改建议 ({len(suggestions)}条):")
+            for idx, suggestion in enumerate(suggestions[:3], 1):
+                logger.info(f"    {idx}. {suggestion[:100]}...")
+        logger.info("=" * 80)
+
         conversation_history.append({
             "agent": "outline_reviewer",
             "iteration": iteration + 1,
@@ -2146,10 +2198,9 @@ async def _generate_outline_with_agents_impl(
         })
 
         # 检查是否通过
-        score = reviewer_result.get("score", 0)
         final_score = score
 
-        if reviewer_result.get("approved", False) and score >= min_score_threshold:
+        if approved and score >= min_score_threshold:
             logger.info(f"✅ 大纲审批通过！评分：{score}/{min_score_threshold}")
             final_outline = writer_result
             break
@@ -2170,10 +2221,23 @@ async def _generate_outline_with_agents_impl(
     total_time = time.time() - start_time
     iterations = len([h for h in conversation_history if h["agent"] == "outline_writer"])
 
+    # ✅ 验证生成的章节有效性
+    chapters = final_outline.get("chapters", [])
+    if not chapters:
+        raise ValueError("Writer Agent未生成任何章节")
+
+    for idx, ch in enumerate(chapters):
+        if not ch.get("chapter_number"):
+            logger.warning(f"⚠️ 第{idx+1}个章节缺少chapter_number字段")
+        if not ch.get("title"):
+            logger.warning(f"⚠️ 第{ch.get('chapter_number', '?')}章缺少title字段")
+        if not ch.get("summary"):
+            logger.warning(f"⚠️ 第{ch.get('chapter_number', '?')}章缺少summary字段")
+
     # ✅ 返回与传统模式兼容的完整数据结构
     result = {
         "volume_title": final_outline.get("volume_title", ""),
-        "chapters": final_outline.get("chapters", []),
+        "chapters": chapters,
         "characters": final_outline.get("characters", []),
         "relationships": final_outline.get("relationships", []),
         "world_setting": final_outline.get("world_setting", {}),
@@ -2187,14 +2251,24 @@ async def _generate_outline_with_agents_impl(
         }
     }
 
+    # ✅ 详细日志输出
+    logger.info("=" * 80)
     logger.info(
         f"=== 3Agent大纲生成完成 ===\n"
         f"  起始章节: {start_chapter}\n"
-        f"  生成章节数: {len(final_outline.get('chapters', []))}\n"
+        f"  卷名: {result.get('volume_title', 'N/A')}\n"
+        f"  生成章节数: {len(chapters)}\n"
+        f"  角色数: {len(result.get('characters', []))}\n"
+        f"  关系数: {len(result.get('relationships', []))}\n"
         f"  迭代次数: {iterations}\n"
         f"  最终评分: {final_score}\n"
         f"  总耗时: {total_time:.2f}秒 ({total_time/60:.1f}分钟)"
     )
+    logger.info("\n📖 生成章节预览（前3章）：")
+    for ch in chapters[:3]:
+        logger.info(f"  第{ch.get('chapter_number')}章 - {ch.get('title')}")
+        logger.info(f"    摘要: {ch.get('summary', '')[:150]}...")
+    logger.info("=" * 80)
 
     return result
 
@@ -2242,12 +2316,17 @@ async def _call_outline_planner_agent(
             f"规划Agent返回非JSON格式，响应前200字: {response_str[:200]}",
             exc_info=True
         )
-        # 返回默认结构
+        # ✅ 优化：返回更完整的默认结构，包含Writer需要的所有字段
         return {
             "analysis": response_str[:500],
             "chapter_plan": {"total_chapters": 50, "structure": "线性", "key_points": []},
             "rhythm": "均衡节奏",
-            "notes": "解析失败，使用默认规划"
+            "notes": "解析失败，使用默认规划",
+            # ✅ 添加Writer需要的字段
+            "volume_title_suggestion": "新的征程",
+            "volume_theme": "成长与挑战",
+            "world_expansion": {"new_locations": [], "new_systems": []},
+            "character_development": {"focus_characters": [], "development_arcs": []}
         }
 
 
@@ -2285,13 +2364,17 @@ async def _call_outline_writer_agent(
 
     try:
         response = json.loads(response_str)
+        # ✅ 验证必需字段
+        if "chapters" not in response or not response["chapters"]:
+            logger.error(f"❌ 写作Agent返回的JSON缺少chapters字段或为空")
+            raise ValueError("大纲撰写失败：返回的JSON缺少chapters字段")
         return response
     except json.JSONDecodeError as e:
         logger.error(
-            f"写作Agent返回非JSON格式，响应前200字: {response_str[:200]}",
+            f"❌ 写作Agent返回非JSON格式，响应前200字: {response_str[:200]}",
             exc_info=True
         )
-        raise ValueError("大纲撰写失败：返回格式错误")
+        raise ValueError(f"大纲撰写失败：返回格式错误 - {str(e)}")
 
 
 async def _call_outline_reviewer_agent(
