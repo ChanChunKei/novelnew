@@ -775,7 +775,7 @@ async def _tool_search_chapters(
         from ..services.vector_store_service import VectorStoreService
         vector_service = VectorStoreService()
 
-        results = await vector_service.search_chunks(
+        results = await vector_service.query_chunks(
             project_id=project_id,
             query_text=keyword,
             top_k=limit
