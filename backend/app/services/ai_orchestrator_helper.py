@@ -1705,6 +1705,23 @@ async def _call_writer_agent(
                 chapter_number=chapter_number,
                 version_idx=1
             )
+
+            # ✅ 额外验证：确保full_content不是planner格式
+            full_content = response["full_content"]
+            if isinstance(full_content, dict):
+                logger.error(f"❌ Writer返回的full_content是dict而不是字符串！可能误返回了planner格式")
+                raise ValueError("生成失败：full_content格式错误（应该是字符串，收到dict）")
+
+            # 检查是否包含planner的典型结构关键词（简单启发式检查）
+            planner_keywords = ["analysis:", "plan:", "queries_summary:", "notes_for_writer:"]
+            suspicious_count = sum(1 for kw in planner_keywords if kw in full_content[:500])
+            if suspicious_count >= 2:
+                logger.warning(
+                    f"⚠️ Writer返回的full_content疑似包含planner格式内容（检测到{suspicious_count}个planner关键词）\n"
+                    f"  前200字: {full_content[:200]}"
+                )
+                # 不抛异常，只警告，因为可能是误判
+
             return response
 
     # ✅ 两轮都失败，抛出异常
