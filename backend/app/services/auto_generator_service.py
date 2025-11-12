@@ -28,8 +28,60 @@ from ..utils.metrics import (
 )
 from ..utils.json_utils import remove_think_tags, unwrap_markdown_json
 from ..db.session import retry_on_db_lock
+import re
 
 logger = logging.getLogger(__name__)
+
+
+def strip_markdown_formatting(text: str) -> str:
+    """
+    移除文本中的Markdown格式标记，保留纯文本内容
+
+    处理的标记：
+    - 标题：## 、### 等
+    - 粗体：**文本** 或 __文本__
+    - 斜体：*文本* 或 _文本_
+    - 代码：`文本`
+    - 链接：[文本](url)
+    - 其他常见标记
+
+    Args:
+        text: 包含Markdown标记的文本
+
+    Returns:
+        清理后的纯文本
+    """
+    if not text:
+        return text
+
+    # 移除标题标记（##、###等），保留文本
+    text = re.sub(r'^#{1,6}\s+', '', text, flags=re.MULTILINE)
+
+    # 移除粗体标记 **text** 或 __text__
+    text = re.sub(r'\*\*(.+?)\*\*', r'\1', text)
+    text = re.sub(r'__(.+?)__', r'\1', text)
+
+    # 移除斜体标记 *text* 或 _text_（要在粗体之后处理）
+    text = re.sub(r'\*(.+?)\*', r'\1', text)
+    text = re.sub(r'(?<!\w)_(.+?)_(?!\w)', r'\1', text)
+
+    # 移除行内代码标记 `code`
+    text = re.sub(r'`(.+?)`', r'\1', text)
+
+    # 移除链接，保留文本 [text](url) -> text
+    text = re.sub(r'\[(.+?)\]\(.+?\)', r'\1', text)
+
+    # 移除图片 ![alt](url) -> alt
+    text = re.sub(r'!\[(.+?)\]\(.+?\)', r'\1', text)
+
+    # 移除引用标记 >
+    text = re.sub(r'^>\s+', '', text, flags=re.MULTILINE)
+
+    # 移除列表标记 - 或 * 或 数字.
+    text = re.sub(r'^[\*\-\+]\s+', '', text, flags=re.MULTILINE)
+    text = re.sub(r'^\d+\.\s+', '', text, flags=re.MULTILINE)
+
+    return text
 
 
 class AutoGeneratorService:
@@ -888,6 +940,27 @@ class AutoGeneratorService:
                                 except Exception as e:
                                     logger.error(f"反转义失败: {e}，保持原样")
                                     pass
+
+                        # ✅ 强制清理Markdown标记：检测并移除所有Markdown格式
+                        if isinstance(full_content, str):
+                            # 检测是否包含Markdown标记
+                            markdown_patterns = [
+                                r'^#{1,6}\s+',       # 标题
+                                r'\*\*.*?\*\*',      # 粗体
+                                r'__.*?__',          # 粗体
+                                r'\*.*?\*',          # 斜体
+                                r'`.*?`',            # 代码
+                            ]
+                            has_markdown = any(re.search(pattern, full_content, re.MULTILINE) for pattern in markdown_patterns)
+
+                            if has_markdown:
+                                original_preview = full_content[:100]
+                                full_content = strip_markdown_formatting(full_content)
+                                logger.warning(
+                                    f"第 {next_chapter_number} 章版本 {idx+1}: 检测到Markdown标记，已自动清理\n"
+                                    f"  原始预览: {original_preview}...\n"
+                                    f"  清理后预览: {full_content[:100]}..."
+                                )
 
                         contents.append(full_content)
                         logger.info(f"第 {next_chapter_number} 章版本 {idx+1}: 提取full_content，长度={len(full_content)}")
