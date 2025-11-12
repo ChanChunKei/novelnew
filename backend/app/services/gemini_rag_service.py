@@ -17,8 +17,12 @@ Gemini Semantic Retrieval API 集成服务
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
 
@@ -48,30 +52,97 @@ class GeminiRAGService:
     1. 章节生成后自动入库：add_chapter()
     2. search_chapters 工具调用：search()
     3. 项目删除时清理：delete_corpus()
+
+    配置优先级：
+    1. 数据库 SystemConfig 表（gemini.api_key, rag.provider）
+    2. 环境变量（GEMINI_API_KEY, RAG_PROVIDER）
     """
 
-    def __init__(self, api_key: Optional[str] = None):
+    def __init__(self, db_session: Optional["AsyncSession"] = None):
         """
         初始化 Gemini RAG 服务
 
         Args:
-            api_key: Gemini API Key，格式 AIzaSy...
+            db_session: 数据库会话，用于读取配置
         """
         if not genai:
             raise RuntimeError("缺少 google-generativeai 依赖，请先安装：pip install google-generativeai")
 
+        self._db_session = db_session
+        self._enabled = False
+        self._api_key: Optional[str] = None
+
+    async def _ensure_configured(self) -> bool:
+        """
+        确保服务已配置
+
+        从数据库或环境变量读取配置
+        """
+        if self._enabled:
+            return True
+
+        # 1. 尝试从数据库读取配置
+        api_key = await self._get_api_key()
+
         if not api_key:
-            logger.warning("未提供 Gemini API Key，RAG 功能将不可用")
-            self._enabled = False
-            return
+            logger.debug("未配置 Gemini API Key，RAG 功能不可用")
+            return False
 
         try:
             genai.configure(api_key=api_key)
             self._enabled = True
+            self._api_key = api_key
             logger.info("✅ Gemini RAG 服务初始化成功")
+            return True
         except Exception as e:
             logger.error(f"❌ Gemini RAG 初始化失败: {e}")
-            self._enabled = False
+            return False
+
+    async def _get_api_key(self) -> Optional[str]:
+        """
+        获取 Gemini API Key
+
+        优先级：
+        1. 数据库 system_configs 表（gemini.api_key）
+        2. 环境变量（GEMINI_API_KEY）
+        """
+        # 优先从数据库读取
+        if self._db_session:
+            try:
+                from ..repositories.system_config_repository import SystemConfigRepository
+                repo = SystemConfigRepository(self._db_session)
+                record = await repo.get_by_key("gemini.api_key")
+                if record and record.value:
+                    return record.value.strip()
+            except Exception as e:
+                logger.warning(f"从数据库读取 Gemini API Key 失败: {e}")
+
+        # 回退到环境变量
+        return os.getenv("GEMINI_API_KEY")
+
+    async def _get_rag_provider(self) -> str:
+        """
+        获取 RAG 提供方配置
+
+        优先级：
+        1. 数据库 system_configs 表（rag.provider）
+        2. 环境变量（RAG_PROVIDER）
+        3. 默认值（libsql）
+        """
+        # 优先从数据库读取
+        if self._db_session:
+            try:
+                from ..repositories.system_config_repository import SystemConfigRepository
+                repo = SystemConfigRepository(self._db_session)
+                record = await repo.get_by_key("rag.provider")
+                if record and record.value:
+                    return record.value.strip().lower()
+            except Exception as e:
+                logger.warning(f"从数据库读取 RAG Provider 失败: {e}")
+
+        # 回退到环境变量
+        provider = os.getenv("RAG_PROVIDER", "libsql")
+        return provider.strip().lower()
 
     @property
     def enabled(self) -> bool:
@@ -97,7 +168,7 @@ class GeminiRAGService:
         Returns:
             corpus_name: Corpus 资源名称，格式 corpora/xxx
         """
-        if not self._enabled:
+        if not await self._ensure_configured():
             return None
 
         display_name = self._get_corpus_name(project_id)
@@ -139,7 +210,7 @@ class GeminiRAGService:
         Returns:
             bool: 是否成功
         """
-        if not self._enabled:
+        if not await self._ensure_configured():
             logger.debug("Gemini RAG 未启用，跳过章节入库")
             return False
 
@@ -189,7 +260,7 @@ class GeminiRAGService:
         Returns:
             搜索结果列表
         """
-        if not self._enabled:
+        if not await self._ensure_configured():
             logger.debug("Gemini RAG 未启用，返回空结果")
             return []
 
@@ -270,7 +341,7 @@ class GeminiRAGService:
         Returns:
             bool: 是否成功
         """
-        if not self._enabled:
+        if not await self._ensure_configured():
             return False
 
         display_name = self._get_corpus_name(project_id)
@@ -305,7 +376,7 @@ class GeminiRAGService:
         Returns:
             bool: 是否成功
         """
-        if not self._enabled:
+        if not await self._ensure_configured():
             return False
 
         corpus_name = await self.ensure_corpus(project_id)

@@ -9,6 +9,7 @@
 import asyncio
 import json
 import logging
+import os
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
@@ -2101,13 +2102,19 @@ class AutoGeneratorService:
             chapter: 章节对象（需包含 selected_version 和 real_summary）
             project_id: 项目ID
         """
-        # 仅在 Gemini RAG 启用时处理
-        if settings.rag_provider != "gemini" or not settings.gemini_api_key:
-            logger.debug("Gemini RAG 未启用，跳过章节入库")
-            return
-
         try:
+            from ..repositories.system_config_repository import SystemConfigRepository
             from ..services.gemini_rag_service import GeminiRAGService
+
+            # ✅ 修改：从数据库或环境变量读取配置
+            repo = SystemConfigRepository(db)
+            rag_provider_record = await repo.get_by_key("rag.provider")
+            rag_provider = rag_provider_record.value if rag_provider_record else os.getenv("RAG_PROVIDER", "libsql")
+
+            # 仅在 Gemini RAG 启用时处理
+            if rag_provider.strip().lower() != "gemini":
+                logger.debug("Gemini RAG 未启用，跳过章节入库")
+                return
 
             # 确保章节有内容和摘要
             if not chapter.selected_version or not chapter.selected_version.content:
@@ -2127,22 +2134,21 @@ class AutoGeneratorService:
             outline = result.scalar_one_or_none()
             chapter_title = outline.title if outline else f"第{chapter.chapter_number}章"
 
-            # 调用 Gemini RAG 服务
-            gemini_service = GeminiRAGService(api_key=settings.gemini_api_key)
+            # ✅ 修改：传递 db_session 而不是 api_key
+            gemini_service = GeminiRAGService(db_session=db)
 
-            if gemini_service.enabled:
-                success = await gemini_service.add_chapter(
-                    project_id=project_id,
-                    chapter_number=chapter.chapter_number,
-                    chapter_title=chapter_title,
-                    content=chapter.selected_version.content,
-                    summary=chapter.real_summary or ""
-                )
+            success = await gemini_service.add_chapter(
+                project_id=project_id,
+                chapter_number=chapter.chapter_number,
+                chapter_title=chapter_title,
+                content=chapter.selected_version.content,
+                summary=chapter.real_summary or ""
+            )
 
-                if success:
-                    logger.info(f"✅ 第 {chapter.chapter_number} 章已入库到 Gemini Corpus")
-                else:
-                    logger.warning(f"⚠️ 第 {chapter.chapter_number} 章入库 Gemini 失败")
+            if success:
+                logger.info(f"✅ 第 {chapter.chapter_number} 章已入库到 Gemini Corpus")
+            else:
+                logger.warning(f"⚠️ 第 {chapter.chapter_number} 章入库 Gemini 失败")
 
         except Exception as e:
             # 入库失败不应该中断章节生成流程

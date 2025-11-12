@@ -6,6 +6,7 @@ AI Orchestrator 辅助函数
 import asyncio
 import logging
 import json
+import os
 import time
 from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
@@ -777,34 +778,40 @@ async def _tool_search_chapters(
     if not project_id:
         return "错误：缺少project_id"
 
-    # 方式1：Gemini Semantic Retrieval（优先，如果配置了）
-    if settings.rag_provider == "gemini" and settings.gemini_api_key:
-        try:
-            from ..services.gemini_rag_service import GeminiRAGService
+    # 方式1：Gemini Semantic Retrieval（优先，检查配置）
+    # ✅ 修改：从数据库或环境变量读取配置
+    try:
+        from ..repositories.system_config_repository import SystemConfigRepository
+        from ..services.gemini_rag_service import GeminiRAGService
 
-            gemini_service = GeminiRAGService(api_key=settings.gemini_api_key)
+        repo = SystemConfigRepository(db_session)
+        rag_provider_record = await repo.get_by_key("rag.provider")
+        rag_provider = rag_provider_record.value if rag_provider_record else os.getenv("RAG_PROVIDER", "libsql")
 
-            if gemini_service.enabled:
-                results = await gemini_service.search(
-                    project_id=project_id,
-                    query=keyword,
-                    top_k=limit
-                )
+        if rag_provider.strip().lower() == "gemini":
+            # ✅ 修改：传递 db_session 而不是 api_key
+            gemini_service = GeminiRAGService(db_session=db_session)
 
-                if results:
-                    formatted_results = []
-                    for item in results:
-                        formatted_results.append(
-                            f"【第{item.chapter_number}章】{item.chapter_title}\n"
-                            f"相关度: {item.relevance_score:.2f}\n"
-                            f"内容片段:\n{item.content_snippet}...\n"
-                        )
-                    logger.info(f"✅ Gemini RAG 搜索成功: query='{keyword}', 结果数={len(results)}")
-                    return "\n\n".join(formatted_results)
-                else:
-                    logger.warning(f"⚠️ Gemini RAG 搜索无结果，回退到数据库搜索")
-        except Exception as e:
-            logger.warning(f"⚠️ Gemini RAG 搜索失败，回退到数据库搜索: {str(e)}")
+            results = await gemini_service.search(
+                project_id=project_id,
+                query=keyword,
+                top_k=limit
+            )
+
+            if results:
+                formatted_results = []
+                for item in results:
+                    formatted_results.append(
+                        f"【第{item.chapter_number}章】{item.chapter_title}\n"
+                        f"相关度: {item.relevance_score:.2f}\n"
+                        f"内容片段:\n{item.content_snippet}...\n"
+                    )
+                logger.info(f"✅ Gemini RAG 搜索成功: query='{keyword}', 结果数={len(results)}")
+                return "\n\n".join(formatted_results)
+            else:
+                logger.warning(f"⚠️ Gemini RAG 搜索无结果，回退到数据库搜索")
+    except Exception as e:
+        logger.warning(f"⚠️ Gemini RAG 搜索失败，回退到数据库搜索: {str(e)}")
 
     # 方式2：libsql 向量检索（如果配置了）
     elif settings.rag_provider == "libsql" and settings.vector_store_enabled:
