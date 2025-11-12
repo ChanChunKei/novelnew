@@ -1040,6 +1040,7 @@ async def _tool_get_recent_chapters(
 
     try:
         from sqlalchemy import select, and_
+        from sqlalchemy.orm import selectinload
         from ..models.novel import Chapter
 
         start_chapter = max(1, current_chapter - count)
@@ -1051,6 +1052,8 @@ async def _tool_get_recent_chapters(
                 Chapter.chapter_number >= start_chapter,
                 Chapter.chapter_number <= end_chapter
             )
+        ).options(
+            selectinload(Chapter.selected_version)  # 预加载selected_version避免N+1查询
         ).order_by(Chapter.chapter_number)
 
         result = await db_session.execute(stmt)
@@ -1061,9 +1064,11 @@ async def _tool_get_recent_chapters(
 
         formatted_results = []
         for ch in chapters:
+            # Chapter模型没有title和content字段，需要通过selected_version获取
+            content = ch.selected_version.content if ch.selected_version else "内容未找到"
             formatted_results.append(
-                f"=== 第{ch.chapter_number}章：{ch.title or ''} ===\n"
-                f"{ch.content or ''}\n"
+                f"=== 第{ch.chapter_number}章 ===\n"
+                f"{content}\n"
             )
         return "\n\n".join(formatted_results)
 
@@ -1173,14 +1178,15 @@ async def _tool_find_foreshadowing(
                     snippet = content[start_pos:end_pos]
                     found_keywords.append((keyword, snippet))
 
-            # 也检查章节摘要
-            if ch.summary:
+            # 也检查章节摘要（Chapter.real_summary）
+            if ch.real_summary:
                 for keyword in foreshadowing_keywords:
-                    if keyword in ch.summary:
-                        found_keywords.append((keyword, f"摘要：{ch.summary}"))
+                    if keyword in ch.real_summary:
+                        found_keywords.append((keyword, f"摘要：{ch.real_summary}"))
 
             if found_keywords:
-                chapter_result = f"【第{ch.chapter_number}章】{ch.title or ''}\n"
+                # Chapter模型没有title字段，title在ChapterOutline中
+                chapter_result = f"【第{ch.chapter_number}章】\n"
                 for kw, snippet in found_keywords[:3]:  # 最多显示3个
                     chapter_result += f"  含'{kw}'：...{snippet}...\n"
                 results.append(chapter_result)
