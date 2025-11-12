@@ -1009,15 +1009,22 @@ class AutoGeneratorService:
 
                         logger.info(f"第 {next_chapter_number} 章版本 {idx+1}: 提取content，长度={len(content)}")
                     else:
-                        # 如果没有找到内容字段，使用整个JSON
-                        content_str = json.dumps(variant, ensure_ascii=False)
-                        contents.append(content_str)
-                        summaries.append("")  # ✅ 没有summary
-                        logger.warning(f"第 {next_chapter_number} 章版本 {idx+1}: 未找到full_content或content字段，使用完整JSON")
+                        # ❌ 如果没有找到内容字段，抛出异常而不是保存JSON
+                        logger.error(
+                            f"❌ 第 {next_chapter_number} 章版本 {idx+1}: 返回的JSON缺少full_content或content字段\n"
+                            f"  返回的字段: {list(variant.keys())}\n"
+                            f"  这可能是LLM返回了错误的格式"
+                        )
+                        raise ValueError(
+                            f"第 {next_chapter_number} 章版本 {idx+1} 生成失败：返回的JSON缺少full_content或content字段，"
+                            f"收到的字段为 {list(variant.keys())}"
+                        )
                 else:
-                    logger.info(f"第 {next_chapter_number} 章版本 {idx+1}: variant不是dict，直接转字符串")
-                    contents.append(str(variant))
-                    summaries.append("")  # ✅ 没有summary
+                    # ❌ variant不是dict，抛出异常
+                    logger.error(f"❌ 第 {next_chapter_number} 章版本 {idx+1}: variant不是dict，类型为 {type(variant)}")
+                    raise ValueError(
+                        f"第 {next_chapter_number} 章版本 {idx+1} 生成失败：返回的数据不是dict，类型为 {type(variant)}"
+                    )
 
             # 保存版本
             await novel_service.replace_chapter_versions(chapter, contents, None)
