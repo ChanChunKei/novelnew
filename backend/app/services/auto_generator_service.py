@@ -941,24 +941,16 @@ class AutoGeneratorService:
                                     logger.error(f"反转义失败: {e}，保持原样")
                                     pass
 
-                        # ✅ 强制清理Markdown标记：检测并移除所有Markdown格式
+                        # ✅ 强制清理Markdown标记：无论是否检测到，都进行清理（防止漏检）
                         if isinstance(full_content, str):
-                            # 检测是否包含Markdown标记
-                            markdown_patterns = [
-                                r'^#{1,6}\s+',       # 标题
-                                r'\*\*.*?\*\*',      # 粗体
-                                r'__.*?__',          # 粗体
-                                r'\*.*?\*',          # 斜体
-                                r'`.*?`',            # 代码
-                            ]
-                            has_markdown = any(re.search(pattern, full_content, re.MULTILINE) for pattern in markdown_patterns)
+                            original_content = full_content
+                            full_content = strip_markdown_formatting(full_content)
 
-                            if has_markdown:
-                                original_preview = full_content[:100]
-                                full_content = strip_markdown_formatting(full_content)
+                            # 如果内容发生了变化，说明清理了Markdown
+                            if full_content != original_content:
                                 logger.warning(
-                                    f"第 {next_chapter_number} 章版本 {idx+1}: 检测到Markdown标记，已自动清理\n"
-                                    f"  原始预览: {original_preview}...\n"
+                                    f"第 {next_chapter_number} 章版本 {idx+1}: 检测到并清理了Markdown标记\n"
+                                    f"  原始预览: {original_content[:100]}...\n"
                                     f"  清理后预览: {full_content[:100]}..."
                                 )
 
@@ -967,23 +959,16 @@ class AutoGeneratorService:
                     elif "content" in variant and variant["content"]:
                         content = variant["content"]
 
-                        # ✅ 同样对content字段进行Markdown清理
+                        # ✅ 强制清理Markdown标记：无论是否检测到，都进行清理（防止漏检）
                         if isinstance(content, str):
-                            markdown_patterns = [
-                                r'^#{1,6}\s+',       # 标题
-                                r'\*\*.*?\*\*',      # 粗体
-                                r'__.*?__',          # 粗体
-                                r'\*.*?\*',          # 斜体
-                                r'`.*?`',            # 代码
-                            ]
-                            has_markdown = any(re.search(pattern, content, re.MULTILINE) for pattern in markdown_patterns)
+                            original_content = content
+                            content = strip_markdown_formatting(content)
 
-                            if has_markdown:
-                                original_preview = content[:100]
-                                content = strip_markdown_formatting(content)
+                            # 如果内容发生了变化，说明清理了Markdown
+                            if content != original_content:
                                 logger.warning(
-                                    f"第 {next_chapter_number} 章版本 {idx+1}: content字段检测到Markdown标记，已自动清理\n"
-                                    f"  原始预览: {original_preview}...\n"
+                                    f"第 {next_chapter_number} 章版本 {idx+1}: content字段检测到并清理了Markdown标记\n"
+                                    f"  原始预览: {original_content[:100]}...\n"
                                     f"  清理后预览: {content[:100]}..."
                                 )
 
