@@ -763,35 +763,79 @@ async def _tool_search_chapters(
     project_id: Optional[str],
     arguments: Dict
 ) -> str:
-    """搜索历史章节"""
+    """
+    搜索历史章节
+
+    支持三种检索方式：
+    1. Gemini Semantic Retrieval（RAG_PROVIDER=gemini）
+    2. libsql 向量库（RAG_PROVIDER=libsql）
+    3. 数据库关键词搜索（fallback）
+    """
     keyword = arguments.get("keyword")
     limit = arguments.get("limit", 3)
 
     if not project_id:
         return "错误：缺少project_id"
 
-    # 方式1：使用向量检索（如果可用）
-    try:
-        from ..services.vector_store_service import VectorStoreService
-        vector_service = VectorStoreService()
+    # 方式1：Gemini Semantic Retrieval（优先，如果配置了）
+    if settings.rag_provider == "gemini" and settings.gemini_api_key:
+        try:
+            from ..services.gemini_rag_service import GeminiRAGService
 
-        results = await vector_service.query_chunks(
-            project_id=project_id,
-            query_text=keyword,
-            top_k=limit
-        )
+            gemini_service = GeminiRAGService(api_key=settings.gemini_api_key)
 
-        if results:
-            formatted_results = []
-            for chunk in results:
-                formatted_results.append(
-                    f"【第{chunk.chapter_number}章】{chunk.chapter_title or ''}\n"
-                    f"相关度: {chunk.score:.2f}\n"
-                    f"内容片段:\n{chunk.content[:500]}...\n"
+            if gemini_service.enabled:
+                results = await gemini_service.search(
+                    project_id=project_id,
+                    query=keyword,
+                    top_k=limit
                 )
-            return "\n\n".join(formatted_results)
-    except Exception as e:
-        logger.warning(f"向量检索失败，尝试数据库查询: {str(e)}")
+
+                if results:
+                    formatted_results = []
+                    for item in results:
+                        formatted_results.append(
+                            f"【第{item.chapter_number}章】{item.chapter_title}\n"
+                            f"相关度: {item.relevance_score:.2f}\n"
+                            f"内容片段:\n{item.content_snippet}...\n"
+                        )
+                    logger.info(f"✅ Gemini RAG 搜索成功: query='{keyword}', 结果数={len(results)}")
+                    return "\n\n".join(formatted_results)
+                else:
+                    logger.warning(f"⚠️ Gemini RAG 搜索无结果，回退到数据库搜索")
+        except Exception as e:
+            logger.warning(f"⚠️ Gemini RAG 搜索失败，回退到数据库搜索: {str(e)}")
+
+    # 方式2：libsql 向量检索（如果配置了）
+    elif settings.rag_provider == "libsql" and settings.vector_store_enabled:
+        try:
+            from ..services.vector_store_service import VectorStoreService
+            from ..services.llm_service import LLMService
+
+            vector_service = VectorStoreService()
+            llm_service = LLMService(db=db_session)
+
+            # ✅ 修复：需要先将查询文本转为向量
+            keyword_embedding = await llm_service.get_embedding(keyword)
+
+            results = await vector_service.query_chunks(
+                project_id=project_id,
+                embedding=keyword_embedding,  # ✅ 传递向量而不是文本
+                top_k=limit
+            )
+
+            if results:
+                formatted_results = []
+                for chunk in results:
+                    formatted_results.append(
+                        f"【第{chunk.chapter_number}章】{chunk.chapter_title or ''}\n"
+                        f"相关度: {chunk.score:.2f}\n"
+                        f"内容片段:\n{chunk.content[:500]}...\n"
+                    )
+                logger.info(f"✅ libsql 向量搜索成功: query='{keyword}', 结果数={len(results)}")
+                return "\n\n".join(formatted_results)
+        except Exception as e:
+            logger.warning(f"⚠️ libsql 向量检索失败，回退到数据库搜索: {str(e)}")
 
     # 方式2：数据库全文搜索（fallback）
     try:

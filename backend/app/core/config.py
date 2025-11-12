@@ -176,6 +176,18 @@ class Settings(BaseSettings):
         description="章节分块重叠字数",
     )
 
+    # -------------------- Gemini RAG 配置 --------------------
+    gemini_api_key: Optional[str] = Field(
+        default=None,
+        env="GEMINI_API_KEY",
+        description="Google Gemini API Key，格式 AIzaSy..."
+    )
+    rag_provider: str = Field(
+        default="libsql",
+        env="RAG_PROVIDER",
+        description="RAG 检索提供方：libsql（本地向量库）或 gemini（Google托管）"
+    )
+
     # -------------------- Linux.do OAuth 配置 --------------------
     linuxdo_client_id: Optional[str] = Field(default=None, env="LINUXDO_CLIENT_ID", description="Linux.do OAuth Client ID")
     linuxdo_client_secret: Optional[str] = Field(
@@ -232,6 +244,14 @@ class Settings(BaseSettings):
         candidate = (value or "openai").strip().lower()
         if candidate not in {"openai", "ollama"}:
             raise ValueError("EMBEDDING_PROVIDER 仅支持 openai 或 ollama")
+        return candidate
+
+    @validator("rag_provider", pre=True)
+    def _normalize_rag_provider(cls, value: Optional[str]) -> str:
+        """限制 RAG 提供方的取值范围。"""
+        candidate = (value or "libsql").strip().lower()
+        if candidate not in {"libsql", "gemini"}:
+            raise ValueError("RAG_PROVIDER 仅支持 libsql 或 gemini")
         return candidate
 
     @validator("embedding_base_url", "ollama_embedding_base_url", "openai_base_url", pre=True)

@@ -1116,6 +1116,10 @@ class AutoGeneratorService:
                             db, task, chapter_obj, next_chapter_number,
                             blueprint_dict, llm_service
                         )
+                        # ✅ Gemini RAG: 章节入库
+                        await cls._ingest_chapter_to_rag(
+                            db, chapter_obj, task.project_id
+                        )
                     else:
                         # ✅ 基础模式：使用3Agent已生成的summary（如果有），否则重新生成
                         # 获取选中版本的summary（如果是3Agent模式）
@@ -1124,6 +1128,10 @@ class AutoGeneratorService:
                         await cls._process_basic_mode(
                             db, task, chapter_obj, llm_service,
                             agent_generated_summary=agent_summary  # ✅ 传递3Agent生成的summary
+                        )
+                        # ✅ Gemini RAG: 章节入库
+                        await cls._ingest_chapter_to_rag(
+                            db, chapter_obj, task.project_id
                         )
 
                     # 创意功能分析已移除（角色、世界观现在保存在 Volume 快照中）
@@ -2075,6 +2083,71 @@ class AutoGeneratorService:
             return 0
 
     @classmethod
+    async def _ingest_chapter_to_rag(
+        cls,
+        db: AsyncSession,
+        chapter: Chapter,
+        project_id: str
+    ):
+        """
+        将章节内容入库到 RAG 系统（Gemini 或 libsql）
+
+        根据配置的 rag_provider 自动选择：
+        - gemini: 使用 Google Gemini Semantic Retrieval
+        - libsql: 使用本地向量库（需要单独调用入库服务）
+
+        Args:
+            db: 数据库会话
+            chapter: 章节对象（需包含 selected_version 和 real_summary）
+            project_id: 项目ID
+        """
+        # 仅在 Gemini RAG 启用时处理
+        if settings.rag_provider != "gemini" or not settings.gemini_api_key:
+            logger.debug("Gemini RAG 未启用，跳过章节入库")
+            return
+
+        try:
+            from ..services.gemini_rag_service import GeminiRAGService
+
+            # 确保章节有内容和摘要
+            if not chapter.selected_version or not chapter.selected_version.content:
+                logger.warning(f"第 {chapter.chapter_number} 章没有内容，跳过 Gemini 入库")
+                return
+
+            # 获取章节标题（从 ChapterOutline）
+            from sqlalchemy import select
+            from ..models.novel import ChapterOutline
+
+            result = await db.execute(
+                select(ChapterOutline).where(
+                    ChapterOutline.project_id == project_id,
+                    ChapterOutline.chapter_number == chapter.chapter_number
+                )
+            )
+            outline = result.scalar_one_or_none()
+            chapter_title = outline.title if outline else f"第{chapter.chapter_number}章"
+
+            # 调用 Gemini RAG 服务
+            gemini_service = GeminiRAGService(api_key=settings.gemini_api_key)
+
+            if gemini_service.enabled:
+                success = await gemini_service.add_chapter(
+                    project_id=project_id,
+                    chapter_number=chapter.chapter_number,
+                    chapter_title=chapter_title,
+                    content=chapter.selected_version.content,
+                    summary=chapter.real_summary or ""
+                )
+
+                if success:
+                    logger.info(f"✅ 第 {chapter.chapter_number} 章已入库到 Gemini Corpus")
+                else:
+                    logger.warning(f"⚠️ 第 {chapter.chapter_number} 章入库 Gemini 失败")
+
+        except Exception as e:
+            # 入库失败不应该中断章节生成流程
+            logger.error(f"❌ Gemini 入库异常（第 {chapter.chapter_number} 章）: {e}")
+
     async def _process_basic_mode(
         cls,
         db: AsyncSession,
