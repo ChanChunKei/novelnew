@@ -154,16 +154,19 @@ def check_all_chapters(cursor):
             except:
                 pass
 
-        planner_keywords = ["analysis:", "plan:", "queries_summary:", "notes_for_writer:"]
-        if any(kw in content[:500] for kw in planner_keywords):
-            issues.append("Planner格式")
-            stats['planner_format'] += 1
+        if content:
+            planner_keywords = ["analysis:", "plan:", "queries_summary:", "notes_for_writer:"]
+            content_preview = content[:500] if len(content) >= 500 else content
+            if any(kw in content_preview for kw in planner_keywords):
+                issues.append("Planner格式")
+                stats['planner_format'] += 1
 
-        if "```" in content[:200]:
-            issues.append("Markdown标记")
-            stats['markdown'] += 1
+            content_head = content[:200] if len(content) >= 200 else content
+            if "```" in content_head:
+                issues.append("Markdown标记")
+                stats['markdown'] += 1
 
-        word_count = len(content)
+        word_count = len(content) if content else 0
         total_words += word_count
 
         if word_count < 500:
@@ -249,17 +252,20 @@ def check_recent_chapters(cursor):
 
         # 格式检查
         issues = []
-        if content.strip().startswith("{") and content.strip().endswith("}"):
-            try:
-                json.loads(content)
-                issues.append("❌ 纯JSON")
-            except:
-                pass
+        if content:
+            content_stripped = content.strip()
+            if content_stripped.startswith("{") and content_stripped.endswith("}"):
+                try:
+                    json.loads(content)
+                    issues.append("❌ 纯JSON")
+                except:
+                    pass
 
-        if any(kw in content[:500] for kw in ["analysis:", "plan:", "queries_summary:"]):
-            issues.append("❌ Planner格式")
+            content_preview = content[:500] if len(content) >= 500 else content
+            if any(kw in content_preview for kw in ["analysis:", "plan:", "queries_summary:"]):
+                issues.append("❌ Planner格式")
 
-        word_count = len(content)
+        word_count = len(content) if content else 0
         if word_count < 500:
             issues.append(f"⚠️  字数少({word_count})")
 

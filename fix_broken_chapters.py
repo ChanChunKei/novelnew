@@ -91,7 +91,8 @@ def detect_issue(content):
 
     # 3. 检查 Planner 格式
     planner_keywords = ["analysis:", "plan:", "queries_summary:", "notes_for_writer:"]
-    if any(kw in content[:500] for kw in planner_keywords):
+    content_preview = content[:500] if len(content) >= 500 else content
+    if any(kw in content_preview for kw in planner_keywords):
         return "planner", "Planner格式"
 
     # 4. 检查字数
