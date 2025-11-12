@@ -69,14 +69,20 @@ for idx, (chapter_num, project, content, metadata, created, word_count) in enume
     # 检测格式问题
     issues = []
 
+    if not content:
+        issues.append("❌ 内容为空")
+        return issues
+
     # 检查1：是否包含 planner 格式关键词
     planner_keywords = ["analysis:", "plan:", "queries_summary:", "notes_for_writer:"]
+    content_preview = content[:500] if len(content) >= 500 else content
     for kw in planner_keywords:
-        if kw in content[:500]:
+        if kw in content_preview:
             issues.append(f"⚠️  包含 Planner 关键词: {kw}")
 
     # 检查2：是否是纯 JSON
-    if content.strip().startswith("{") and content.strip().endswith("}"):
+    content_stripped = content.strip()
+    if content_stripped.startswith("{") and content_stripped.endswith("}"):
         try:
             json.loads(content)
             issues.append("⚠️  内容是纯 JSON 格式")

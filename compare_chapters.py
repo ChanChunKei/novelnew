@@ -51,12 +51,14 @@ def analyze_chapter_quality(content, metadata):
         except:
             pass
 
-    planner_keywords = ["analysis:", "plan:", "queries_summary:", "notes_for_writer:"]
-    if any(kw in content[:500] for kw in planner_keywords):
-        quality['has_issues'] = True
-        quality['issues'].append("Planner格式")
+    if content:
+        planner_keywords = ["analysis:", "plan:", "queries_summary:", "notes_for_writer:"]
+        content_preview = content[:500] if len(content) >= 500 else content
+        if any(kw in content_preview for kw in planner_keywords):
+            quality['has_issues'] = True
+            quality['issues'].append("Planner格式")
 
-    if len(content) < 500:
+    if not content or len(content) < 500:
         quality['has_issues'] = True
         quality['issues'].append("字数过少")
 

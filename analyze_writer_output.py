@@ -210,19 +210,24 @@ try:
     print("📄 最终存储的章节内容")
     print("=" * 80)
 
-    print(f"\n长度: {len(content)} 字符")
+    print(f"\n长度: {len(content) if content else 0} 字符")
 
     # 检查格式
     issues = []
-    if content.strip().startswith("{") and content.strip().endswith("}"):
-        try:
-            json.loads(content)
-            issues.append("❌ 是纯 JSON 格式")
-        except:
-            pass
+    if content:
+        content_stripped = content.strip()
+        if content_stripped.startswith("{") and content_stripped.endswith("}"):
+            try:
+                json.loads(content)
+                issues.append("❌ 是纯 JSON 格式")
+            except:
+                pass
 
-    if any(kw in content[:500] for kw in ["analysis:", "plan:", "queries_summary:", "notes_for_writer:"]):
-        issues.append("❌ 包含 Planner 格式关键词")
+        content_preview = content[:500] if len(content) >= 500 else content
+        if any(kw in content_preview for kw in ["analysis:", "plan:", "queries_summary:", "notes_for_writer:"]):
+            issues.append("❌ 包含 Planner 格式关键词")
+    else:
+        issues.append("❌ 内容为空")
 
     if issues:
         print("\n问题:")
