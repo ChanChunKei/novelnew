@@ -26,10 +26,25 @@
 ```
 
 **重要说明：**
+- `full_content` 和 `writing_notes` 必须**严格分离**，不能混在一起
+- `full_content` 只包含**章节正文**，不要包含任何创作说明、元信息、注释
+- `writing_notes` 单独存放创作思路、亮点分析、字数统计等**元信息**
 - `full_content` 必须是**纯文本字符串**，不能是JSON对象
 - 不要在 `full_content` 中再次嵌套JSON结构
-- 正确示例：`"full_content": "第一段内容...\n\n第二段内容..."`
-- 错误示例：`"full_content": "{\"content\": \"...\"}"` ❌
+- 正确示例：
+  ```json
+  {
+    "full_content": "## 第一章 标题\n\n第一段内容...\n\n第二段内容...",
+    "writing_notes": "本章重点展现了主角的性格，字数3000字。"
+  }
+  ```
+- 错误示例（❌ 把元信息混进正文）：
+  ```json
+  {
+    "full_content": "## 第一章 标题\n\n第一段...\n\n[创作说明：本章重点...]",
+    "writing_notes": "..."
+  }
+  ```
 
 # 写作要求
 ## 内容要求
