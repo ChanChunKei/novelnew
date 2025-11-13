@@ -150,6 +150,7 @@ export interface Chapter {
   evaluation: string | null
   generation_status: 'not_generated' | 'generating' | 'evaluating' | 'selecting' | 'failed' | 'evaluation_failed' | 'waiting_for_confirm' | 'successful'
   word_count?: number  // 字数统计
+  selected_version_metadata?: Record<string, any> | null  // ✅ 新增：3Agent的metadata
 }
 
 export interface ConversationMessage {

@@ -238,16 +238,8 @@ defineEmits(['showVersionSelector'])
 const showMetadataModal = ref(false)
 
 const metadata = computed(() => {
-  // 获取选中版本的metadata
-  if (props.selectedChapter.selected_version_metadata) {
-    return props.selectedChapter.selected_version_metadata
-  }
-  // 如果没有，尝试从versions中获取
-  if (props.selectedChapter.versions && props.selectedChapter.versions.length > 0) {
-    const selectedVersion = props.selectedChapter.versions.find(v => v.id === props.selectedChapter.selected_version_id)
-    return selectedVersion?.metadata || null
-  }
-  return null
+  // 直接从selectedChapter中获取metadata
+  return props.selectedChapter.selected_version_metadata || null
 })
 
 const hasMetadata = computed(() => {

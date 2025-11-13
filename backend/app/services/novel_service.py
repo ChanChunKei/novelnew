@@ -946,6 +946,11 @@ class NovelService:
                     latest = sorted(chapter.evaluations, key=lambda item: item.created_at)[-1]
                     evaluation_text = latest.feedback or latest.decision
 
+        # ✅ 新增：提取选中版本的metadata
+        selected_version_metadata = None
+        if include_content and chapter and chapter.selected_version and chapter.selected_version.metadata:
+            selected_version_metadata = chapter.selected_version.metadata
+
         return ChapterSchema(
             chapter_number=chapter_number,
             title=title,
@@ -958,4 +963,5 @@ class NovelService:
             word_count=word_count,
             volume_id=volume_id,
             volume_number=volume_number,
+            selected_version_metadata=selected_version_metadata,  # ✅ 新增：返回metadata
         )

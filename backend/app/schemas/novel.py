@@ -80,6 +80,7 @@ class Chapter(ChapterOutline):
     versions: Optional[List[str]] = None
     evaluation: Optional[str] = None
     generation_status: ChapterGenerationStatus = ChapterGenerationStatus.NOT_GENERATED
+    selected_version_metadata: Optional[Dict[str, Any]] = None  # ✅ 新增：3Agent的metadata
 
 
 class Relationship(BaseModel):
