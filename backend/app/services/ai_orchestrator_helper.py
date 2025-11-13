@@ -168,9 +168,26 @@ def _clean_full_content(content: str, chapter_number: int = 0, version_idx: int 
     if content.strip().startswith("{"):
         try:
             nested = json.loads(content)
-            if isinstance(nested, dict) and "full_content" in nested:
-                logger.warning(f"第 {chapter_number} 章版本 {version_idx}: 检测到嵌套JSON，自动提取")
-                content = nested["full_content"]
+            if isinstance(nested, dict):
+                # ✅ 检测是否是Planner格式的JSON
+                planner_keywords = ["analysis", "plan", "queries_summary", "notes_for_writer"]
+                found_planner_fields = [k for k in planner_keywords if k in nested]
+                
+                if found_planner_fields and "full_content" not in nested:
+                    # ❌ 这是Planner格式，不是章节内容！
+                    logger.error(
+                        f"第 {chapter_number} 章版本 {version_idx}: "
+                        f"检测到Planner格式的JSON（包含字段: {found_planner_fields}），"
+                        f"但缺少 full_content 字段。这是Writer返回了错误格式！"
+                    )
+                    raise ValueError(
+                        f"Writer返回了Planner格式的JSON（包含: {found_planner_fields}），"
+                        f"而不是章节内容。期望包含 'full_content' 字段。"
+                    )
+                
+                if "full_content" in nested:
+                    logger.warning(f"第 {chapter_number} 章版本 {version_idx}: 检测到嵌套JSON，自动提取")
+                    content = nested["full_content"]
         except json.JSONDecodeError:
             pass
 
@@ -1711,9 +1728,21 @@ async def _call_writer_agent(
                 f"写作Agent返回非JSON格式（第{round_num + 1}轮），"
                 f"响应前200字: {response_str[:200]}"
             )
-            cleaned_content = _clean_full_content(response_str, chapter_number=chapter_number, version_idx=1)
             
-            # ✅ 修复BUG: 对非JSON响应也要进行Planner格式检查
+            # ✅ 尝试清理内容，同时检测Planner格式
+            try:
+                cleaned_content = _clean_full_content(response_str, chapter_number=chapter_number, version_idx=1)
+            except ValueError as clean_error:
+                # _clean_full_content检测到Planner格式JSON
+                logger.error(f"❌ 内容清理时检测到Planner格式: {clean_error}")
+                if round_num == 0:
+                    logger.warning("⚠️ 第一轮检测到Planner格式，将进入第二轮重新生成...")
+                    continue  # 进入第二轮
+                else:
+                    # 第二轮还是Planner格式，抛出异常阻止保存
+                    raise ValueError(f"生成失败：{clean_error}")
+            
+            # ✅ 额外的文本关键词检查（备用检测）
             # 检查是否包含planner的典型结构关键词（检查前1000字）
             planner_keywords = ["analysis", "plan", "queries_summary", "notes_for_writer"]
             suspicious_count = 0
@@ -1741,6 +1770,14 @@ async def _call_writer_agent(
                     )
             
             return {"full_content": cleaned_content}
+        except ValueError as e:
+            # 捕获所有ValueError（包括Planner格式检测）
+            if round_num == 0:
+                logger.warning(f"⚠️ 第一轮生成出错: {e}，将进入第二轮重新生成...")
+                continue  # 进入第二轮
+            else:
+                logger.error(f"❌ 第二轮仍然失败: {e}")
+                raise
         except Exception as e:
             logger.error(f"写作Agent处理响应时出错: {e}", exc_info=True)
             raise
@@ -1786,17 +1823,31 @@ async def _call_writer_agent(
                     )
 
             # 清理full_content后返回
-            response["full_content"] = _clean_full_content(
-                response["full_content"],
-                chapter_number=chapter_number,
-                version_idx=1
-            )
+            try:
+                response["full_content"] = _clean_full_content(
+                    response["full_content"],
+                    chapter_number=chapter_number,
+                    version_idx=1
+                )
+            except ValueError as clean_error:
+                # _clean_full_content检测到Planner格式JSON
+                logger.error(f"❌ full_content清理时检测到Planner格式: {clean_error}")
+                if round_num == 0:
+                    logger.warning("⚠️ 第一轮检测到Planner格式，将进入第二轮重新生成...")
+                    continue  # 进入第二轮
+                else:
+                    # 第二轮还是Planner格式，抛出异常阻止保存
+                    raise ValueError(f"生成失败：{clean_error}")
 
             # ✅ 额外验证：确保full_content不是planner格式
             full_content = response["full_content"]
             if isinstance(full_content, dict):
                 logger.error(f"❌ Writer返回的full_content是dict而不是字符串！可能误返回了planner格式")
-                raise ValueError("生成失败：full_content格式错误（应该是字符串，收到dict）")
+                if round_num == 0:
+                    logger.warning("⚠️ 第一轮检测到dict格式，将进入第二轮重新生成...")
+                    continue
+                else:
+                    raise ValueError("生成失败：full_content格式错误（应该是字符串，收到dict）")
 
             # ✅ 增强检查：检查更多字符以提高检测准确度（从500字增加到1000字）
             # 检查是否包含planner的典型结构关键词
