@@ -1968,11 +1968,20 @@ def _build_writer_context(
     final_context = "\n".join(context_parts)
 
     logger.info("=" * 80)
-    logger.info("📤 Writer 收到的上下文 (前 1000 字符):")
+    logger.info("📤 Writer 收到的上下文 (前 3000 字符):")
     logger.info("-" * 80)
-    logger.info(final_context[:1000])
+    logger.info(final_context[:3000])
     logger.info("-" * 80)
     logger.info(f"总长度: {len(final_context)} 字符")
+
+    # ✅ 特别输出：确认 Planner 部分的格式
+    planner_section_start = final_context.find("# 思考Agent的分析和建议")
+    if planner_section_start != -1:
+        planner_section = final_context[planner_section_start:planner_section_start + 800]
+        logger.info("-" * 80)
+        logger.info("🔍 Planner 分析部分 (前 800 字符):")
+        logger.info(planner_section)
+        logger.info("-" * 80)
     logger.info("=" * 80)
 
     return final_context
