@@ -140,6 +140,7 @@ def _clean_full_content(content: str, chapter_number: int = 0, version_idx: int 
     清理full_content，应用与auto_generator相同的清理流程
 
     处理步骤：
+    0. 移除 Markdown 代码块和 think 标签（🆕 修复 Planner 格式问题）
     1. 检测并处理嵌套JSON
     2. 双重转义修复（\\n → \n）
     3. Markdown标记清理
@@ -156,6 +157,12 @@ def _clean_full_content(content: str, chapter_number: int = 0, version_idx: int 
         return content
 
     original_content = content
+
+    # 🆕 步骤0: 先移除 Markdown 代码块包裹和 think 标签
+    # 这是修复 Planner 格式问题的关键步骤！
+    from ..utils.json_utils import remove_think_tags, unwrap_markdown_json
+    content = remove_think_tags(content)
+    content = unwrap_markdown_json(content)
 
     # 步骤1: 检测嵌套JSON
     if content.strip().startswith("{"):
@@ -1923,6 +1930,10 @@ def _build_writer_context(
         planner_guidance.append(f"【写作建议】\n{planner_result['notes_for_writer']}")
     if planner_result.get("queries_summary"):
         planner_guidance.append(f"【查询结果参考】\n{planner_result['queries_summary']}")
+
+    logger.info(f"  planner_guidance 条目数: {len(planner_guidance)}")
+    if planner_guidance:
+        logger.info(f"  第一条内容前100字: {planner_guidance[0][:100]}")
 
     context_parts = [
         "# 章节上下文（所有章节摘要 + 前两章完整内容 + 当前章大纲）",
