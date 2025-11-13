@@ -116,45 +116,54 @@ def diagnose_database(db_path: str):
             print("=" * 80)
 
             try:
-                metadata = json.loads(metadata_str)
-                conversation_history = metadata.get("conversation_history", [])
+                if metadata_str is None:
+                    print("\n⚠️  metadata 为 None")
+                    print("这意味着章节生成过程中没有记录 conversation_history")
+                else:
+                    metadata = json.loads(metadata_str)
+                    if metadata is None:
+                        print("\n⚠️  metadata 解析后为 None")
+                    else:
+                        conversation_history = metadata.get("conversation_history", [])
 
-                if conversation_history:
-                    print(f"\n对话轮次: {len(conversation_history)}")
+                        if not conversation_history:
+                            print("\n⚠️  conversation_history 为空")
+                        else:
+                            print(f"\n对话轮次: {len(conversation_history)}")
 
-                    # 找 Planner 输出
-                    for item in conversation_history:
-                        if item.get("agent") == "planner":
-                            print("\n" + "-" * 80)
-                            print("Planner 输出:")
-                            print("-" * 80)
-                            planner_content = item.get("content")
-                            print(json.dumps(planner_content, ensure_ascii=False, indent=2)[:600])
-                            print("...")
-                            break
+                            # 找 Planner 输出
+                            for item in conversation_history:
+                                if item.get("agent") == "planner":
+                                    print("\n" + "-" * 80)
+                                    print("Planner 输出:")
+                                    print("-" * 80)
+                                    planner_content = item.get("content")
+                                    print(json.dumps(planner_content, ensure_ascii=False, indent=2)[:600])
+                                    print("...")
+                                    break
 
-                    # 找 Writer 输出
-                    writer_items = [item for item in conversation_history if item.get("agent") == "writer"]
-                    if writer_items:
-                        print("\n" + "-" * 80)
-                        print(f"Writer 输出 (共 {len(writer_items)} 轮):")
-                        print("-" * 80)
+                            # 找 Writer 输出
+                            writer_items = [item for item in conversation_history if item.get("agent") == "writer"]
+                            if writer_items:
+                                print("\n" + "-" * 80)
+                                print(f"Writer 输出 (共 {len(writer_items)} 轮):")
+                                print("-" * 80)
 
-                        for idx, item in enumerate(writer_items, 1):
-                            writer_content = item.get("content")
-                            print(f"\n第 {idx} 轮:")
-                            if isinstance(writer_content, dict):
-                                full_content = writer_content.get("full_content", "")
-                                if full_content:
-                                    preview = full_content[:300]
-                                    # 检查是否是 Planner 格式
-                                    if any(f'"{kw}":' in preview for kw in planner_keywords):
-                                        print("❌ Writer 返回了 Planner 格式！")
+                                for idx, item in enumerate(writer_items, 1):
+                                    writer_content = item.get("content")
+                                    print(f"\n第 {idx} 轮:")
+                                    if isinstance(writer_content, dict):
+                                        full_content = writer_content.get("full_content", "")
+                                        if full_content:
+                                            preview = full_content[:300]
+                                            # 检查是否是 Planner 格式
+                                            if any(f'"{kw}":' in preview for kw in planner_keywords):
+                                                print("❌ Writer 返回了 Planner 格式！")
+                                            else:
+                                                print("✅ Writer 返回了正常内容")
+                                            print(f"前 200 字符: {full_content[:200]}")
                                     else:
-                                        print("✅ Writer 返回了正常内容")
-                                    print(f"前 200 字符: {full_content[:200]}")
-                            else:
-                                print(f"内容: {str(writer_content)[:200]}")
+                                        print(f"内容: {str(writer_content)[:200]}")
 
             except Exception as e:
                 print(f"⚠️  解析 metadata 失败: {e}")
