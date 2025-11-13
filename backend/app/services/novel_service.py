@@ -38,6 +38,15 @@ def _coerce_text(value: Any) -> Optional[str]:
         return str(value)
     if isinstance(value, dict):
         logger.info(f"🔍 _coerce_text处理dict，keys={list(value.keys())}")
+        
+        # ✅ 修复：先检查是否是Planner格式，如果是则拒绝
+        planner_keywords = ["analysis", "plan", "queries_summary", "notes_for_writer"]
+        found_planner_fields = [k for k in planner_keywords if k in value]
+        if found_planner_fields and "full_content" not in value:
+            logger.error(f"❌ 检测到Planner格式dict（包含字段: {found_planner_fields}），但缺少full_content！")
+            logger.error(f"❌ 拒绝保存Planner内容作为章节正文！")
+            raise ValueError(f"内容格式错误：包含Planner字段{found_planner_fields}，但缺少full_content字段。这不是章节内容！")
+        
         for key in _PREFERRED_CONTENT_KEYS:
             if key in value and value[key]:
                 logger.info(f"✅ 找到字段 '{key}'，值类型={type(value[key])}, 值长度={len(str(value[key]))}")
@@ -46,9 +55,11 @@ def _coerce_text(value: Any) -> Optional[str]:
                     logger.info(f"✅ 成功提取字段 '{key}'，提取后长度={len(nested)}")
                     return nested
                 else:
-                    logger.warning(f"⚠️ 字段 '{key}' 提取后为空")
-        logger.warning(f"⚠️ 未找到任何有效字段，返回完整JSON")
-        return _clean_string(json.dumps(value, ensure_ascii=False))
+                    logger.warning(f"⚠️ 字段 '{key}'提取后为空")
+        
+        # ✅ 修复：如果没有找到任何有效字段，抛出错误而不是返回JSON
+        logger.error(f"❌ Dict中未找到任何有效内容字段！keys={list(value.keys())}")
+        raise ValueError(f"内容格式错误：Dict中缺少有效内容字段，期望包含{_PREFERRED_CONTENT_KEYS}中的任意一个")
     if isinstance(value, (list, tuple, set)):
         parts = [text for text in (_coerce_text(item) for item in value) if text]
         if parts:
