@@ -1712,6 +1712,34 @@ async def _call_writer_agent(
                 f"响应前200字: {response_str[:200]}"
             )
             cleaned_content = _clean_full_content(response_str, chapter_number=chapter_number, version_idx=1)
+            
+            # ✅ 修复BUG: 对非JSON响应也要进行Planner格式检查
+            # 检查是否包含planner的典型结构关键词（检查前1000字）
+            planner_keywords = ["analysis", "plan", "queries_summary", "notes_for_writer"]
+            suspicious_count = 0
+            check_length = min(1000, len(cleaned_content))  # 检查前1000字或全文(如果更短)
+            for kw in planner_keywords:
+                # 检查多种格式: analysis:, "analysis":
+                if f'{kw}:' in cleaned_content[:check_length] or f'"{kw}":' in cleaned_content[:check_length]:
+                    suspicious_count += 1
+            
+            if suspicious_count >= 2:
+                logger.error(
+                    f"❌ 写作Agent返回的非JSON内容包含planner格式（检测到{suspicious_count}个planner关键词）\n"
+                    f"  前200字: {cleaned_content[:200]}\n"
+                    f"  这不是章节正文，而是Planner的分析结果"
+                )
+                # 如果是第一轮，继续到第二轮
+                if round_num == 0:
+                    logger.warning("⚠️ 第一轮检测到Planner格式，将进入第二轮重新生成...")
+                    continue  # 进入第二轮
+                else:
+                    # 第二轮还是Planner格式，抛出异常阻止保存
+                    raise ValueError(
+                        f"生成失败：Writer返回的内容是Planner格式（包含 {suspicious_count} 个planner关键词），"
+                        "而不是章节正文。请检查模型输出或prompt配置。"
+                    )
+            
             return {"full_content": cleaned_content}
         except Exception as e:
             logger.error(f"写作Agent处理响应时出错: {e}", exc_info=True)
@@ -1770,13 +1798,15 @@ async def _call_writer_agent(
                 logger.error(f"❌ Writer返回的full_content是dict而不是字符串！可能误返回了planner格式")
                 raise ValueError("生成失败：full_content格式错误（应该是字符串，收到dict）")
 
-            # 检查是否包含planner的典型结构关键词（简单启发式检查）
+            # ✅ 增强检查：检查更多字符以提高检测准确度（从500字增加到1000字）
+            # 检查是否包含planner的典型结构关键词
             # 同时检查冒号前后的格式：analysis: 或 "analysis":
             planner_keywords = ["analysis", "plan", "queries_summary", "notes_for_writer"]
             suspicious_count = 0
+            check_length = min(1000, len(full_content))  # 检查前1000字或全文(如果更短)
             for kw in planner_keywords:
                 # 检查多种格式: analysis:, "analysis":
-                if f'{kw}:' in full_content[:500] or f'"{kw}":' in full_content[:500]:
+                if f'{kw}:' in full_content[:check_length] or f'"{kw}":' in full_content[:check_length]:
                     suspicious_count += 1
 
             if suspicious_count >= 2:
@@ -1792,7 +1822,7 @@ async def _call_writer_agent(
                 else:
                     # ✅ 第二轮还是Planner格式，抛出异常阻止保存
                     raise ValueError(
-                        f"生成失败：Writer返回的full_content是Planner格式（包含 {planner_keywords[:suspicious_count]}），"
+                        f"生成失败：Writer返回的full_content是Planner格式（包含 {suspicious_count} 个planner关键词），"
                         "而不是章节正文。请检查模型输出或prompt配置。"
                     )
 
