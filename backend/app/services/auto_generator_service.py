@@ -913,6 +913,7 @@ class AutoGeneratorService:
             # ✅ 提取full_content和summary字段（如果是3Agent模式生成的）
             contents = []
             summaries = []  # ✅ 新增：保存3Agent模式生成的summary
+            metadatas = []  # ✅ 新增：保存3Agent模式生成的metadata（对话历史、评分等）
             for idx, variant in enumerate(raw_versions):
                 if isinstance(variant, dict):
                     # 优先提取full_content字段
@@ -990,9 +991,14 @@ class AutoGeneratorService:
                         agent_summary = variant.get("summary", "")
                         summaries.append(agent_summary)
 
+                        # ✅ 新增：提取3Agent模式的metadata（对话历史、评分、耗时等）
+                        agent_metadata = variant.get("metadata", {})
+                        metadatas.append(agent_metadata if agent_metadata else None)
+
                         logger.info(
                             f"第 {next_chapter_number} 章版本 {idx+1}: 提取full_content，长度={len(full_content)}"
                             + (f"，已提取3Agent summary" if agent_summary else "")
+                            + (f"，已提取metadata（迭代{agent_metadata.get('iterations', 'N/A')}次，评分{agent_metadata.get('final_score', 'N/A')}）" if agent_metadata else "")
                         )
                     elif "content" in variant and variant["content"]:
                         content = variant["content"]
@@ -1032,6 +1038,10 @@ class AutoGeneratorService:
                         agent_summary = variant.get("summary", "")
                         summaries.append(agent_summary)
 
+                        # ✅ 新增：尝试提取metadata（传统模式可能没有）
+                        agent_metadata = variant.get("metadata", {})
+                        metadatas.append(agent_metadata if agent_metadata else None)
+
                         logger.info(f"第 {next_chapter_number} 章版本 {idx+1}: 提取content，长度={len(content)}")
                     else:
                         # ❌ 如果没有找到内容字段，抛出异常而不是保存JSON
@@ -1051,8 +1061,8 @@ class AutoGeneratorService:
                         f"第 {next_chapter_number} 章版本 {idx+1} 生成失败：返回的数据不是dict，类型为 {type(variant)}"
                     )
 
-            # 保存版本
-            await novel_service.replace_chapter_versions(chapter, contents, None)
+            # 保存版本（包含metadata）
+            await novel_service.replace_chapter_versions(chapter, contents, metadatas)
 
             # 如果启用自动选择，先评估再选择最佳版本
             if task.auto_select_version:

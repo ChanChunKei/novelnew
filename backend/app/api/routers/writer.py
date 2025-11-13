@@ -436,8 +436,9 @@ async def generate_chapter(
     for idx in range(version_count):
         raw_versions.append(await _generate_single_version(idx))
 
-    # 提取full_content字段
+    # 提取full_content字段和metadata
     contents: List[str] = []
+    metadatas: List[Dict] = []  # ✅ 新增：保存3Agent模式生成的metadata
     for idx, variant in enumerate(raw_versions):
         if isinstance(variant, dict):
             # 优先提取full_content字段
@@ -452,12 +453,23 @@ async def generate_chapter(
                 content_str = json.dumps(variant, ensure_ascii=False)
                 contents.append(content_str)
                 logger.warning(f"第 {request.chapter_number} 章版本 {idx+1}: 未找到full_content或content字段，使用完整JSON")
+            
+            # ✅ 新增：提取metadata（3Agent的对话历史、评分等）
+            agent_metadata = variant.get("metadata", {})
+            metadatas.append(agent_metadata if agent_metadata else None)
+            if agent_metadata:
+                logger.info(
+                    f"第 {request.chapter_number} 章版本 {idx+1}: 已提取metadata"
+                    f"（迭代{agent_metadata.get('iterations', 'N/A')}次，"
+                    f"评分{agent_metadata.get('final_score', 'N/A')}）"
+                )
         else:
             contents.append(str(variant))
+            metadatas.append(None)
             logger.info(f"第 {request.chapter_number} 章版本 {idx+1}: variant不是dict，直接转字符串")
 
-    # 保存版本
-    await novel_service.replace_chapter_versions(chapter, contents, None)
+    # 保存版本（包含metadata）
+    await novel_service.replace_chapter_versions(chapter, contents, metadatas)
     logger.info(
         "项目 %s 第 %s 章生成完成，已写入 %s 个版本",
         project_id,

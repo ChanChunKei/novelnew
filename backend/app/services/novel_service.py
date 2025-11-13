@@ -570,10 +570,12 @@ class NovelService:
         for index, content in enumerate(contents):
             extra = metadata[index] if metadata and index < len(metadata) else None
             text_content = _normalize_version_content(content, extra)
+            # ✅ 修复：正确保存metadata（3Agent的对话历史、评分等）
+            version_metadata = extra if extra else None
             version = ChapterVersion(
                 chapter_id=chapter.id,
                 content=text_content,
-                metadata=None,
+                metadata=version_metadata,  # ✅ 保存metadata而不是固定为None
                 version_label=f"v{index+1}",
             )
             self.session.add(version)
