@@ -1906,12 +1906,24 @@ def _build_writer_context(
     is_rewrite: bool
 ) -> str:
     """构建写作Agent的上下文"""
+    # ✅ 修复：只提取 Planner 的文本建议，不要整个 JSON 结构
+    # 避免 LLM 误以为要输出 Planner 格式的 JSON
+    planner_guidance = []
+    if planner_result.get("analysis"):
+        planner_guidance.append(f"【章节分析】\n{planner_result['analysis']}")
+    if planner_result.get("plan"):
+        planner_guidance.append(f"【内容规划】\n{planner_result['plan']}")
+    if planner_result.get("notes_for_writer"):
+        planner_guidance.append(f"【写作建议】\n{planner_result['notes_for_writer']}")
+    if planner_result.get("queries_summary"):
+        planner_guidance.append(f"【查询结果参考】\n{planner_result['queries_summary']}")
+
     context_parts = [
         "# 章节上下文（所有章节摘要 + 前两章完整内容 + 当前章大纲）",
         user_prompt,
         "",
-        "# 思考Agent的分析和规划",
-        json.dumps(planner_result, ensure_ascii=False, indent=2),
+        "# 思考Agent的分析和建议",
+        "\n\n".join(planner_guidance) if planner_guidance else "无额外建议",
         "",
     ]
     
@@ -1932,9 +1944,21 @@ def _build_writer_context(
                 "请重新撰写，确保解决上述问题。",
                 ""
             ])
-    
-    context_parts.append("# 请撰写章节正文（JSON格式：{\"full_content\": \"...\", \"writing_notes\": \"...\"}）")
-    
+
+    # ✅ 修复：明确指令，强调输出的是章节正文而不是分析
+    context_parts.extend([
+        "# ⚠️ 重要：你的任务是撰写章节正文",
+        "",
+        "请根据上述分析和建议，撰写完整的章节内容（小说正文），输出JSON格式：",
+        "{",
+        '  "full_content": "完整的章节正文内容（markdown格式的小说文本）",',
+        '  "writing_notes": "创作说明（可选）"',
+        "}",
+        "",
+        "❌ 不要输出分析、规划等结构化内容",
+        "✅ 只输出故事正文（对话、描写、情节等）"
+    ])
+
     return "\n".join(context_parts)
 
 

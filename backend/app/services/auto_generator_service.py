@@ -2178,6 +2178,7 @@ class AutoGeneratorService:
             # 入库失败不应该中断章节生成流程
             logger.error(f"❌ Gemini 入库异常（第 {chapter.chapter_number} 章）: {e}")
 
+    @classmethod
     async def _process_basic_mode(
         cls,
         db: AsyncSession,
