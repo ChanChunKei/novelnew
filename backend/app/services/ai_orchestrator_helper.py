@@ -1906,6 +1906,12 @@ def _build_writer_context(
     is_rewrite: bool
 ) -> str:
     """构建写作Agent的上下文"""
+    logger.info("=" * 80)
+    logger.info("🔧 _build_writer_context 被调用")
+    logger.info(f"  planner_result keys: {list(planner_result.keys())}")
+    logger.info(f"  is_rewrite: {is_rewrite}")
+    logger.info("=" * 80)
+
     # ✅ 修复：只提取 Planner 的文本建议，不要整个 JSON 结构
     # 避免 LLM 误以为要输出 Planner 格式的 JSON
     planner_guidance = []
@@ -1959,7 +1965,17 @@ def _build_writer_context(
         "✅ 只输出故事正文（对话、描写、情节等）"
     ])
 
-    return "\n".join(context_parts)
+    final_context = "\n".join(context_parts)
+
+    logger.info("=" * 80)
+    logger.info("📤 Writer 收到的上下文 (前 1000 字符):")
+    logger.info("-" * 80)
+    logger.info(final_context[:1000])
+    logger.info("-" * 80)
+    logger.info(f"总长度: {len(final_context)} 字符")
+    logger.info("=" * 80)
+
+    return final_context
 
 
 def _build_reviewer_context(
