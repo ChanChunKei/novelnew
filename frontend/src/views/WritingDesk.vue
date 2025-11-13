@@ -84,6 +84,7 @@
       :detail-version-index="detailVersionIndex"
       :version="availableVersions[detailVersionIndex] || null"
       :is-current="isCurrentVersion(detailVersionIndex)"
+      :version-metadata="selectedChapter?.selected_version_metadata || null"
       @close="closeVersionDetail"
       @select-version="selectVersionFromDetail"
     />

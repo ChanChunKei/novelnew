@@ -25,6 +25,70 @@
 
       <!-- 弹窗内容 -->
       <div class="p-6 overflow-y-auto max-h-[60vh]">
+        <!-- 3Agent Metadata展示 -->
+        <div v-if="versionMetadata" class="mb-6 space-y-4">
+          <!-- 生成概览 -->
+          <div class="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg p-4 border border-blue-200">
+            <h4 class="font-semibold text-gray-800 mb-3 flex items-center gap-2">
+              <span>🤖</span>
+              <span>3Agent生成详情</span>
+            </h4>
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <div>
+                <div class="text-xs text-gray-600">迭代次数</div>
+                <div class="text-lg font-bold text-blue-600">{{ versionMetadata.iterations || 'N/A' }}</div>
+              </div>
+              <div>
+                <div class="text-xs text-gray-600">最终评分</div>
+                <div class="text-lg font-bold text-green-600">{{ versionMetadata.final_score || 'N/A' }}</div>
+              </div>
+              <div>
+                <div class="text-xs text-gray-600">生成耗时</div>
+                <div class="text-lg font-bold text-purple-600">{{ formatTime(versionMetadata.total_time_seconds) }}</div>
+              </div>
+              <div>
+                <div class="text-xs text-gray-600">对话轮次</div>
+                <div class="text-lg font-bold text-orange-600">{{ versionMetadata.conversation_history?.length || 0 }}</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 对话历史摘要 -->
+          <details v-if="versionMetadata.conversation_history" class="border rounded-lg p-3 bg-gray-50">
+            <summary class="cursor-pointer font-medium text-gray-700 text-sm">
+              💬 查看完整生成过程（{{ versionMetadata.conversation_history.length }}个步骤）
+            </summary>
+            <div class="mt-3 space-y-2 max-h-60 overflow-y-auto">
+              <div
+                v-for="(item, index) in versionMetadata.conversation_history"
+                :key="index"
+                class="text-xs border rounded p-2"
+                :class="getAgentColor(item.agent)"
+              >
+                <div class="flex items-center gap-2 mb-1">
+                  <span>{{ getAgentIcon(item.agent) }}</span>
+                  <span class="font-semibold text-xs">{{ getAgentName(item.agent) }}</span>
+                  <span v-if="item.iteration" class="text-xs bg-gray-200 px-1.5 py-0.5 rounded">第{{ item.iteration }}轮</span>
+                </div>
+                
+                <!-- 简化显示 -->
+                <div v-if="item.agent === 'planner' && item.content" class="text-xs text-gray-600">
+                  {{ truncateText(item.content.analysis || item.content.plan || '分析完成', 80) }}
+                </div>
+                <div v-if="item.agent === 'writer' && item.content" class="text-xs text-gray-600">
+                  字数: {{ item.content.word_count || 'N/A' }}
+                </div>
+                <div v-if="item.agent === 'reviewer' && item.content" class="text-xs">
+                  <span :class="item.content.approved ? 'text-green-600' : 'text-red-600'">
+                    {{ item.content.approved ? '✅' : '❌' }} 评分: {{ item.content.score || 'N/A' }}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </details>
+        </div>
+
+        <!-- 章节内容 -->
         <div class="prose max-w-none">
           <div class="whitespace-pre-wrap text-gray-700 leading-relaxed">
             {{ cleanVersionContent(version?.content || '') }}
@@ -73,6 +137,7 @@ interface Props {
   detailVersionIndex: number
   version: ChapterVersion | null
   isCurrent: boolean
+  versionMetadata?: Record<string, any> | null  // ✅ 新增：3Agent metadata
 }
 
 const props = defineProps<Props>()
@@ -95,5 +160,49 @@ const cleanVersionContent = (content: string): string => {
   cleaned = cleaned.replace(/\\t/g, '\t')
   cleaned = cleaned.replace(/\\\\/g, '\\')
   return cleaned
+}
+
+const formatTime = (seconds?: number): string => {
+  if (!seconds) return 'N/A'
+  if (seconds < 60) return `${seconds}秒`
+  const minutes = Math.floor(seconds / 60)
+  const remainingSeconds = Math.round(seconds % 60)
+  return `${minutes}分${remainingSeconds}秒`
+}
+
+const getAgentIcon = (agent: string): string => {
+  const icons: Record<string, string> = {
+    'planner': '🤔',
+    'writer': '✍️',
+    'reviewer': '📝',
+    'summarizer': '📄'
+  }
+  return icons[agent] || '🤖'
+}
+
+const getAgentName = (agent: string): string => {
+  const names: Record<string, string> = {
+    'planner': '思考Agent',
+    'writer': '写作Agent',
+    'reviewer': '审批Agent',
+    'summarizer': '总结Agent'
+  }
+  return names[agent] || agent
+}
+
+const getAgentColor = (agent: string): string => {
+  const colors: Record<string, string> = {
+    'planner': 'bg-blue-50 border-blue-200',
+    'writer': 'bg-green-50 border-green-200',
+    'reviewer': 'bg-orange-50 border-orange-200',
+    'summarizer': 'bg-purple-50 border-purple-200'
+  }
+  return colors[agent] || 'bg-gray-50 border-gray-200'
+}
+
+const truncateText = (text: string | undefined, maxLength: number): string => {
+  if (!text) return ''
+  if (text.length <= maxLength) return text
+  return text.substring(0, maxLength) + '...'
 }
 </script>
