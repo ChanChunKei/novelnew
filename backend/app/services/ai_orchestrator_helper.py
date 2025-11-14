@@ -86,9 +86,20 @@ async def get_agent_prompt_from_db(
         return get_agent_prompt(agent_type)
 
 
-def _strip_markdown_formatting(text: str) -> str:
+def _strip_markdown_formatting_for_detection_only(text: str) -> str:
     """
-    移除文本中的Markdown格式标记，保留纯文本内容
+    ⚠️ 警告：此函数仅用于格式检测，不应用于实际内容清洗！
+
+    本函数用于移除Markdown格式标记，但不应该在保存full_content时使用。
+
+    职责分离原则：
+    - 后端职责：结构清洗（JSON提取、转义修复、Planner检测）
+    - 前端职责：需要纯文本时（导出TXT、复制等）本地清洗Markdown
+
+    保存到数据库的full_content应该保留Markdown格式，以便：
+    1. 保留原始格式信息
+    2. 支持前端Markdown渲染
+    3. 与上游 arboris-novel 保持一致
 
     处理的标记：
     - 标题：## 、### 等
@@ -98,6 +109,10 @@ def _strip_markdown_formatting(text: str) -> str:
     - 链接：[文本](url)
     - 行尾反斜杠+换行符（Markdown硬换行）
     - 其他常见标记
+
+    如果你需要清理Markdown：
+    - 前端导出/复制：在ChapterContent.vue中调用本地清理函数
+    - 特殊情况：明确知道自己在做什么，并记录原因
     """
     if not text:
         return text
@@ -237,13 +252,16 @@ def _validate_planner_output(response: Dict[str, Any], chapter_number: int = 0) 
 
 def _clean_full_content(content: str, chapter_number: int = 0, version_idx: int = 0) -> str:
     """
-    清理full_content，应用与auto_generator相同的清理流程
+    清理full_content，只做结构清洗，保留Markdown格式
 
     处理步骤：
-    0. 移除 Markdown 代码块和 think 标签（🆕 修复 Planner 格式问题）
-    1. 检测并处理嵌套JSON
+    0. 移除 Markdown 代码块包裹和 think 标签（修复 Planner 格式问题）
+    1. 检测并处理嵌套JSON（包含Planner格式检测）
     2. 双重转义修复（\\n → \n）
-    3. Markdown标记清理
+
+    ⚠️ 注意：本函数不再清理Markdown标记，保留原始格式
+    - 后端职责：结构清洗（JSON提取、转义修复、格式检测）
+    - 前端职责：需要纯文本时本地清洗Markdown
 
     Args:
         content: 原始内容
@@ -251,7 +269,7 @@ def _clean_full_content(content: str, chapter_number: int = 0, version_idx: int 
         version_idx: 版本号（用于日志）
 
     Returns:
-        清理后的内容
+        清理后的内容（保留Markdown格式）
     """
     if not content or not isinstance(content, str):
         return content
@@ -308,19 +326,8 @@ def _clean_full_content(content: str, chapter_number: int = 0, version_idx: int 
                 f"第 {chapter_number} 章版本 {version_idx}: 检测到双重转义，已自动修复"
             )
 
-    # 步骤3: Markdown标记清理
-    if isinstance(content, str):
-        cleaned = _strip_markdown_formatting(content)
-
-        if cleaned != original_content:
-            logger.warning(
-                f"第 {chapter_number} 章版本 {version_idx}: 检测到并清理了格式标记\n"
-                f"  原始预览: {original_content[:100]}...\n"
-                f"  清理后预览: {cleaned[:100]}..."
-            )
-
-        return cleaned
-
+    # ✅ 直接返回内容，保留Markdown格式
+    # 不再执行步骤3的Markdown清理，职责转移到前端
     return content
 
 
