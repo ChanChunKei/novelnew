@@ -46,10 +46,10 @@ export function stripMarkdownFormatting(text: string): string {
 }
 
 /**
- * 清理版本内容：解析JSON、处理转义字符、移除Markdown
- * 用于显示、导出、字数统计等场景
+ * 规范化内容：解析JSON、处理转义字符（保留Markdown）
+ * 用于：版本预览、详情显示、编辑器初始化等需要保留格式的场景
  */
-export function cleanVersionContent(content: string): string {
+export function normalizeContent(content: string): string {
   if (!content) return ''
 
   // 1. 尝试解析JSON（如果内容是嵌套的JSON）
@@ -69,10 +69,24 @@ export function cleanVersionContent(content: string): string {
   cleaned = cleaned.replace(/\\t/g, '\t')
   cleaned = cleaned.replace(/\\\\/g, '\\')
 
-  // 3. 清理Markdown格式标记（用于纯文本显示）
-  cleaned = stripMarkdownFormatting(cleaned)
-
   return cleaned
+}
+
+/**
+ * 转换为纯文本：在规范化基础上移除Markdown
+ * 用于：导出TXT、复制纯文本、字数统计、纯文本最终显示
+ */
+export function toPlainText(content: string): string {
+  const normalized = normalizeContent(content)
+  return stripMarkdownFormatting(normalized)
+}
+
+/**
+ * @deprecated 使用 toPlainText() 或 normalizeContent() 代替
+ * 为了向后兼容保留，但建议使用更明确的函数名
+ */
+export function cleanVersionContent(content: string): string {
+  return toPlainText(content)
 }
 
 /**
