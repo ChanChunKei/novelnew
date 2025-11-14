@@ -831,7 +831,7 @@ class AutoGeneratorService:
 
                 # ✅ 读取增强模式自定义温度配置
                 enhanced_temp = task.generation_config.get("enhanced_temperature")
-                temperature = enhanced_temp if enhanced_temp is not None else 0.9
+                temperature = float(enhanced_temp) if enhanced_temp is not None else 0.9
 
                 response = await generate_chapter_content(
                     db_session=db,
@@ -1483,11 +1483,11 @@ class AutoGeneratorService:
             try:
                 # ✅ 读取3Agent自定义配置
                 agent_config = task.generation_config
-                planner_temp = agent_config.get("agent_planner_temperature")
-                writer_temp = agent_config.get("agent_writer_temperature")
-                reviewer_temp = agent_config.get("agent_reviewer_temperature")
-                min_score = agent_config.get("agent_min_score")
-                max_iterations = agent_config.get("agent_max_iterations")
+                planner_temp = float(agent_config.get("agent_planner_temperature")) if agent_config.get("agent_planner_temperature") is not None else None
+                writer_temp = float(agent_config.get("agent_writer_temperature")) if agent_config.get("agent_writer_temperature") is not None else None
+                reviewer_temp = float(agent_config.get("agent_reviewer_temperature")) if agent_config.get("agent_reviewer_temperature") is not None else None
+                min_score = int(agent_config.get("agent_min_score")) if agent_config.get("agent_min_score") is not None else None
+                max_iterations = int(agent_config.get("agent_max_iterations")) if agent_config.get("agent_max_iterations") is not None else None
                 # ✅ 读取3Agent LLM配置
                 planner_provider = agent_config.get("agent_planner_provider")
                 planner_model = agent_config.get("agent_planner_model")
