@@ -1537,8 +1537,6 @@ async def _call_planner_agent(
                 })
         else:
             # 没有工具调用，返回结果
-            # ✅ 验证Planner输出格式：不应包含Writer专属字段
-            _validate_planner_output(response, chapter_number)
             return response
 
     # 3轮后返回最后的响应
@@ -1595,60 +1593,9 @@ async def _call_writer_agent(
                 f"写作Agent返回非JSON格式（第{round_num + 1}轮），"
                 f"响应前200字: {response_str[:200]}"
             )
-            
-            # ========== 步骤1: 清理前检测（非JSON响应） ==========
-            # 在Markdown清理前检测Planner格式
-            is_planner_before, count_before, matched_before = _detect_planner_format(response_str)
-            if is_planner_before:
-                logger.error(
-                    f"❌ 第 {chapter_number} 章: Writer返回的非JSON内容包含Planner格式（清理前检测）\n"
-                    f"  检测到 {count_before} 个关键词: {matched_before}\n"
-                    f"  前200字预览: {response_str[:200]}\n"
-                    f"  这不是章节正文，而是Planner的分析结果"
-                )
-                if round_num == 0:
-                    logger.warning("⚠️ 第一轮检测到Planner格式，将进入第二轮重新生成...")
-                    continue  # 进入第二轮
-                else:
-                    raise ValueError(
-                        f"生成失败：Writer返回的内容是Planner格式（{matched_before}），"
-                        "而不是章节正文。请检查模型输出或prompt配置。"
-                    )
 
-            # ========== 步骤2: 清理内容 ==========
-            try:
-                cleaned_content = _clean_full_content(response_str, chapter_number=chapter_number, version_idx=1)
-            except ValueError as clean_error:
-                # _clean_full_content检测到Planner格式JSON（嵌套JSON检测）
-                logger.error(f"❌ 内容清理时检测到Planner格式: {clean_error}")
-                if round_num == 0:
-                    logger.warning("⚠️ 第一轮检测到Planner格式，将进入第二轮重新生成...")
-                    continue  # 进入第二轮
-                else:
-                    # 第二轮还是Planner格式，抛出异常阻止保存
-                    raise ValueError(f"生成失败：{clean_error}")
-
-            # ========== 步骤3: 清理后再次检测（防止漏检） ==========
-            is_planner_after, count_after, matched_after = _detect_planner_format(cleaned_content)
-            if is_planner_after:
-                logger.error(
-                    f"❌ 第 {chapter_number} 章: Writer返回的非JSON内容包含Planner格式（清理后检测）\n"
-                    f"  检测到 {count_after} 个关键词: {matched_after}\n"
-                    f"  前200字预览: {cleaned_content[:200]}\n"
-                    f"  这不是章节正文，而是Planner的分析结果"
-                )
-                if round_num == 0:
-                    logger.warning("⚠️ 第一轮检测到Planner格式，将进入第二轮重新生成...")
-                    continue  # 进入第二轮
-                else:
-                    raise ValueError(
-                        f"生成失败：Writer返回的内容是Planner格式（{matched_after}），"
-                        "而不是章节正文。请检查模型输出或prompt配置。"
-                    )
-
-            # ✅ 所有检测通过，返回结果
-            logger.debug(f"✅ 第 {chapter_number} 章: Writer非JSON输出验证通过")
-            return {"full_content": cleaned_content}
+            # 直接返回内容，不做检测
+            return {"full_content": response_str}
         except ValueError as e:
             # 捕获所有ValueError（包括Planner格式检测）
             if round_num == 0:
@@ -1705,77 +1652,8 @@ async def _call_writer_agent(
                         f"期望包含 full_content 字段"
                     )
 
-            # ========== 步骤1: 清理前检测（关键改进！） ==========
-            # 在Markdown清理前检测Planner格式，避免关键词被移除后无法检测
-            full_content_raw = response["full_content"]
-
-            # ✅ 额外验证：确保full_content不是dict
-            if isinstance(full_content_raw, dict):
-                logger.error(f"❌ Writer返回的full_content是dict而不是字符串！可能误返回了planner格式")
-                if round_num == 0:
-                    logger.warning("⚠️ 第一轮检测到dict格式，将进入第二轮重新生成...")
-                    continue
-                else:
-                    raise ValueError("生成失败：full_content格式错误（应该是字符串，收到dict）")
-
-            is_planner_before, count_before, matched_before = _detect_planner_format(full_content_raw)
-            if is_planner_before:
-                logger.error(
-                    f"❌ 第 {chapter_number} 章: Writer返回的full_content包含Planner格式（清理前检测）\n"
-                    f"  检测到 {count_before} 个关键词: {matched_before}\n"
-                    f"  前200字预览: {full_content_raw[:200]}\n"
-                    f"  这不是章节正文，而是Planner的分析结果"
-                )
-                if round_num == 0:
-                    logger.warning("⚠️ 第一轮检测到Planner格式，将进入第二轮重新生成...")
-                    continue  # 进入第二轮
-                else:
-                    raise ValueError(
-                        f"生成失败：Writer返回的full_content是Planner格式（{matched_before}），"
-                        "而不是章节正文。请检查模型输出或prompt配置。"
-                    )
-
-            # ========== 步骤2: 清理full_content ==========
-            try:
-                response["full_content"] = _clean_full_content(
-                    response["full_content"],
-                    chapter_number=chapter_number,
-                    version_idx=1
-                )
-            except ValueError as clean_error:
-                # _clean_full_content检测到Planner格式JSON（嵌套JSON检测）
-                logger.error(f"❌ full_content清理时检测到Planner格式: {clean_error}")
-                if round_num == 0:
-                    logger.warning("⚠️ 第一轮检测到Planner格式，将进入第二轮重新生成...")
-                    continue  # 进入第二轮
-                else:
-                    # 第二轮还是Planner格式，抛出异常阻止保存
-                    raise ValueError(f"生成失败：{clean_error}")
-
-            # ========== 步骤3: 清理后再次检测（防止漏检） ==========
-            full_content_cleaned = response["full_content"]
-            is_planner_after, count_after, matched_after = _detect_planner_format(full_content_cleaned)
-            if is_planner_after:
-                logger.error(
-                    f"❌ 第 {chapter_number} 章: Writer返回的full_content包含Planner格式（清理后检测）\n"
-                    f"  检测到 {count_after} 个关键词: {matched_after}\n"
-                    f"  前200字预览: {full_content_cleaned[:200]}\n"
-                    f"  这不是章节正文，而是Planner的分析结果"
-                )
-                if round_num == 0:
-                    logger.warning("⚠️ 第一轮检测到Planner格式，将进入第二轮重新生成...")
-                    continue  # 进入第二轮
-                else:
-                    raise ValueError(
-                        f"生成失败：Writer返回的full_content是Planner格式（{matched_after}），"
-                        "而不是章节正文。请检查模型输出或prompt配置。"
-                    )
-
-            # ✅ 所有检测通过，返回结果
-            logger.debug(
-                f"✅ 第 {chapter_number} 章: Writer输出验证通过\n"
-                f"  字数: {len(full_content_cleaned)}"
-            )
+            # 直接返回响应，不做检测
+            logger.debug(f"✅ 第 {chapter_number} 章: Writer返回full_content")
             return response
 
     # ✅ 两轮都失败，抛出异常
