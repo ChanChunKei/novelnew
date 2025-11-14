@@ -133,6 +133,7 @@
 import { computed, ref, watch, onUnmounted } from 'vue'
 import { globalAlert } from '@/composables/useAlert'
 import type { Chapter, ChapterOutline, ChapterGenerationResponse, ChapterVersion, NovelProject } from '@/api/novel'
+import { cleanVersionContent } from '@/utils/textUtils'
 import WorkspaceInitial from './workspace/WorkspaceInitial.vue'
 import ChapterGenerating from './workspace/ChapterGenerating.vue'
 import VersionSelector from './workspace/VersionSelector.vue'
@@ -180,24 +181,7 @@ const showEditModal = ref(false)
 const editingContent = ref('')
 const isSaving = ref(false)
 
-// 清理版本内容的辅助函数
-const cleanVersionContent = (content: string): string => {
-  if (!content) return ''
-  try {
-    const parsed = JSON.parse(content)
-    if (parsed && typeof parsed === 'object' && parsed.content) {
-      content = parsed.content
-    }
-  } catch (error) {
-    // not a json
-  }
-  let cleaned = content.replace(/^"|"$/g, '')
-  cleaned = cleaned.replace(/\\n/g, '\n')
-  cleaned = cleaned.replace(/\\"/g, '"')
-  cleaned = cleaned.replace(/\\t/g, '\t')
-  cleaned = cleaned.replace(/\\\\/g, '\\')
-  return cleaned
-}
+// cleanVersionContent 已移至 @/utils/textUtils
 
 const openEditModal = () => {
   if (selectedChapter.value?.content) {

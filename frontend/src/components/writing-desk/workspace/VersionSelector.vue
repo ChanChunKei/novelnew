@@ -190,6 +190,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { Chapter, ChapterGenerationResponse, ChapterVersion } from '@/api/novel'
+import { cleanVersionContent } from '@/utils/textUtils'
 
 interface Props {
   selectedChapter: Chapter | null
@@ -213,23 +214,7 @@ const isCurrentVersion = (versionIndex: number) => {
   return cleanCurrentContent === cleanVersionContentStr
 }
 
-const cleanVersionContent = (content: string): string => {
-  if (!content) return ''
-  try {
-    const parsed = JSON.parse(content)
-    if (parsed && typeof parsed === 'object' && parsed.content) {
-      content = parsed.content
-    }
-  } catch (error) {
-    // not a json
-  }
-  let cleaned = content.replace(/^"|"$/g, '')
-  cleaned = cleaned.replace(/\\n/g, '\n')
-  cleaned = cleaned.replace(/\\"/g, '"')
-  cleaned = cleaned.replace(/\\t/g, '\t')
-  cleaned = cleaned.replace(/\\\\/g, '\\')
-  return cleaned
-}
+// cleanVersionContent 已移至 @/utils/textUtils
 
 const parseMarkdown = (text: string): string => {
   if (!text) return ''
