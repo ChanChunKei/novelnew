@@ -41,7 +41,7 @@
         <h4 class="font-semibold text-gray-800">章节内容</h4>
         <div class="flex items-center gap-3">
           <div class="text-sm text-gray-500">
-            约 {{ Math.round(cleanVersionContent(selectedChapter.content || '').length / 100) * 100 }} 字
+            约 {{ Math.round(toPlainText(selectedChapter.content || '').length / 100) * 100 }} 字
           </div>
           <button
             class="inline-flex items-center gap-1 px-3 py-1.5 text-sm font-medium rounded-lg border transition-colors duration-200"
@@ -57,7 +57,7 @@
         </div>
       </div>
       <div class="prose max-w-none">
-        <div class="whitespace-pre-wrap text-gray-700 leading-relaxed">{{ cleanVersionContent(selectedChapter.content || '') }}</div>
+        <div class="whitespace-pre-wrap text-gray-700 leading-relaxed">{{ toPlainText(selectedChapter.content || '') }}</div>
       </div>
     </div>
 
@@ -226,7 +226,7 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import type { Chapter } from '@/api/novel'
-import { cleanVersionContent, sanitizeFileName } from '@/utils/textUtils'
+import { toPlainText, sanitizeFileName } from '@/utils/textUtils'
 
 interface Props {
   selectedChapter: Chapter
@@ -247,14 +247,14 @@ const hasMetadata = computed(() => {
   return metadata.value && Object.keys(metadata.value).length > 0
 })
 
-// stripMarkdownFormatting, cleanVersionContent, sanitizeFileName 已移至 @/utils/textUtils
+// 使用 toPlainText（最终显示和导出需要纯文本，清理Markdown）
 
 const exportChapterAsTxt = (chapter?: Chapter | null) => {
   if (!chapter) return
 
   const title = chapter.title?.trim() || `第${chapter.chapter_number}章`
   const safeTitle = sanitizeFileName(title) || `chapter-${chapter.chapter_number}`
-  const content = cleanVersionContent(chapter.content || '')
+  const content = toPlainText(chapter.content || '')
   const blob = new Blob([content], { type: 'text/plain;charset=utf-8' })
   const url = URL.createObjectURL(blob)
   const link = document.createElement('a')

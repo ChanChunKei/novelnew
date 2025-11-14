@@ -10,7 +10,7 @@
             <span class="text-gray-400">•</span>
             {{ version?.style || '标准' }}风格
             <span class="text-gray-400">•</span>
-            约 {{ Math.round(cleanVersionContent(version?.content || '').length / 100) * 100 }} 字
+            约 {{ Math.round(normalizeContent(version?.content || '').length / 100) * 100 }} 字
           </p>
         </div>
         <button
@@ -91,7 +91,7 @@
         <!-- 章节内容 -->
         <div class="prose max-w-none">
           <div class="whitespace-pre-wrap text-gray-700 leading-relaxed">
-            {{ cleanVersionContent(version?.content || '') }}
+            {{ normalizeContent(version?.content || '') }}
           </div>
         </div>
       </div>
@@ -131,7 +131,7 @@
 <script setup lang="ts">
 import type { ChapterVersion } from '@/api/novel'
 import { computed } from 'vue'
-import { cleanVersionContent } from '@/utils/textUtils'
+import { normalizeContent } from '@/utils/textUtils'
 
 interface Props {
   show: boolean
@@ -145,7 +145,7 @@ const props = defineProps<Props>()
 
 defineEmits(['close', 'selectVersion'])
 
-// cleanVersionContent 已移至 @/utils/textUtils
+// 使用 normalizeContent（保留Markdown格式用于版本详情显示）
 
 const formatTime = (seconds?: number): string => {
   if (!seconds) return 'N/A'

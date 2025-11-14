@@ -133,7 +133,7 @@
 import { computed, ref, watch, onUnmounted } from 'vue'
 import { globalAlert } from '@/composables/useAlert'
 import type { Chapter, ChapterOutline, ChapterGenerationResponse, ChapterVersion, NovelProject } from '@/api/novel'
-import { cleanVersionContent } from '@/utils/textUtils'
+import { normalizeContent } from '@/utils/textUtils'
 import WorkspaceInitial from './workspace/WorkspaceInitial.vue'
 import ChapterGenerating from './workspace/ChapterGenerating.vue'
 import VersionSelector from './workspace/VersionSelector.vue'
@@ -181,11 +181,11 @@ const showEditModal = ref(false)
 const editingContent = ref('')
 const isSaving = ref(false)
 
-// cleanVersionContent 已移至 @/utils/textUtils
+// 使用 normalizeContent（编辑器初始化保留原始Markdown）
 
 const openEditModal = () => {
   if (selectedChapter.value?.content) {
-    editingContent.value = cleanVersionContent(selectedChapter.value.content)
+    editingContent.value = normalizeContent(selectedChapter.value.content)
     showEditModal.value = true
   }
 }

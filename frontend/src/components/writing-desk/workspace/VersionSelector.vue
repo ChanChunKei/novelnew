@@ -134,10 +134,10 @@
             </div>
             <div class="flex-1">
               <p class="text-sm text-gray-700 line-clamp-3">
-                {{ cleanVersionContent(version.content).substring(0, 150) }}...
+                {{ normalizeContent(version.content).substring(0, 150) }}...
               </p>
               <div class="mt-2 flex items-center gap-2 text-xs text-gray-500">
-                <span>约 {{ Math.round(cleanVersionContent(version.content).length / 100) * 100 }} 字</span>
+                <span>约 {{ Math.round(normalizeContent(version.content).length / 100) * 100 }} 字</span>
                 <span>•</span>
                 <span>{{ version.style || '标准' }}风格</span>
                 <span v-if="isCurrentVersion(index)" class="text-green-600 font-medium">• 当前选中</span>
@@ -190,7 +190,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { Chapter, ChapterGenerationResponse, ChapterVersion } from '@/api/novel'
-import { cleanVersionContent } from '@/utils/textUtils'
+import { normalizeContent } from '@/utils/textUtils'
 
 interface Props {
   selectedChapter: Chapter | null
@@ -209,12 +209,12 @@ defineEmits(['hideVersionSelector', 'update:selectedVersionIndex', 'showVersionD
 
 const isCurrentVersion = (versionIndex: number) => {
   if (!props.selectedChapter?.content || !props.availableVersions?.[versionIndex]?.content) return false
-  const cleanCurrentContent = cleanVersionContent(props.selectedChapter.content)
-  const cleanVersionContentStr = cleanVersionContent(props.availableVersions[versionIndex].content)
+  const cleanCurrentContent = normalizeContent(props.selectedChapter.content)
+  const cleanVersionContentStr = normalizeContent(props.availableVersions[versionIndex].content)
   return cleanCurrentContent === cleanVersionContentStr
 }
 
-// cleanVersionContent 已移至 @/utils/textUtils
+// 使用 normalizeContent（保留Markdown格式用于版本预览）
 
 const parseMarkdown = (text: string): string => {
   if (!text) return ''
