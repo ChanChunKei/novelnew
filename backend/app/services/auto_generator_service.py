@@ -23,7 +23,6 @@ from ..schemas.novel import GenerateChapterRequest, BugFixMode
 from .novel_service import NovelService
 from .llm_service import LLMService
 from .prompt_service import PromptService
-from .ai_orchestrator_helper import _detect_planner_format
 from ..utils.metrics import (
     track_duration, chapter_generation_duration,
     chapter_generation_total
@@ -986,21 +985,6 @@ class AutoGeneratorService:
                                     f"  清理后预览: {full_content[:100]}..."
                                 )
 
-                        # ========== 最终验证：保存前检测Planner格式（最后一道防线） ==========
-                        is_planner_final, count_final, matched_final = _detect_planner_format(full_content)
-                        if is_planner_final:
-                            logger.critical(
-                                f"❌ 第 {next_chapter_number} 章版本 {idx+1}: 保存前检测到Planner格式内容！\n"
-                                f"  这是严重的验证漏洞，前置验证点未能检测到此问题\n"
-                                f"  检测到 {count_final} 个关键词: {matched_final}\n"
-                                f"  前200字预览: {full_content[:200]}\n"
-                                f"  拒绝保存此内容"
-                            )
-                            raise ValueError(
-                                f"第 {next_chapter_number} 章版本 {idx+1} 保存失败：内容包含Planner格式（{matched_final}）。"
-                                f"这不是章节正文，拒绝保存到数据库。"
-                            )
-
                         contents.append(full_content)
 
                         # ✅ 新增：提取3Agent模式生成的summary（如果有）
@@ -1047,21 +1031,6 @@ class AutoGeneratorService:
                                     f"  原始预览: {original_content[:100]}...\n"
                                     f"  清理后预览: {content[:100]}..."
                                 )
-
-                        # ========== 最终验证：保存前检测Planner格式（最后一道防线） ==========
-                        is_planner_final, count_final, matched_final = _detect_planner_format(content)
-                        if is_planner_final:
-                            logger.critical(
-                                f"❌ 第 {next_chapter_number} 章版本 {idx+1}: 保存前检测到Planner格式内容（content字段）！\n"
-                                f"  这是严重的验证漏洞，前置验证点未能检测到此问题\n"
-                                f"  检测到 {count_final} 个关键词: {matched_final}\n"
-                                f"  前200字预览: {content[:200]}\n"
-                                f"  拒绝保存此内容"
-                            )
-                            raise ValueError(
-                                f"第 {next_chapter_number} 章版本 {idx+1} 保存失败：content字段包含Planner格式（{matched_final}）。"
-                                f"这不是章节正文，拒绝保存到数据库。"
-                            )
 
                         contents.append(content)
 
