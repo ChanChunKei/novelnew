@@ -246,6 +246,53 @@ const hasMetadata = computed(() => {
   return metadata.value && Object.keys(metadata.value).length > 0
 })
 
+/**
+ * 移除Markdown格式标记，保留纯文本内容
+ *
+ * 用于需要纯文本的场景：
+ * - 导出TXT文件
+ * - 复制纯文本
+ * - 字数统计
+ * - 纯文本显示
+ */
+const stripMarkdownFormatting = (text: string): string => {
+  if (!text) return text
+
+  let cleaned = text
+
+  // 移除标题标记（##、###等），保留文本
+  cleaned = cleaned.replace(/^#{1,6}\s+/gm, '')
+
+  // 移除粗体标记 **text** 或 __text__
+  cleaned = cleaned.replace(/\*\*(.+?)\*\*/g, '$1')
+  cleaned = cleaned.replace(/__(.+?)__/g, '$1')
+
+  // 移除斜体标记 *text* 或 _text_（要在粗体之后处理）
+  cleaned = cleaned.replace(/\*(.+?)\*/g, '$1')
+  cleaned = cleaned.replace(/(?<!\w)_(.+?)_(?!\w)/g, '$1')
+
+  // 移除行内代码标记 `code`
+  cleaned = cleaned.replace(/`(.+?)`/g, '$1')
+
+  // 移除链接，保留文本 [text](url) -> text
+  cleaned = cleaned.replace(/\[(.+?)\]\(.+?\)/g, '$1')
+
+  // 移除图片 ![alt](url) -> alt
+  cleaned = cleaned.replace(/!\[(.+?)\]\(.+?\)/g, '$1')
+
+  // 移除引用标记 >
+  cleaned = cleaned.replace(/^>\s+/gm, '')
+
+  // 移除列表标记 - 或 * 或 数字.
+  cleaned = cleaned.replace(/^[\*\-\+]\s+/gm, '')
+  cleaned = cleaned.replace(/^\d+\.\s+/gm, '')
+
+  // 移除Markdown硬换行：行尾的反斜杠+换行符
+  cleaned = cleaned.replace(/\\\s*\n/g, '\n')
+
+  return cleaned
+}
+
 const cleanVersionContent = (content: string): string => {
   if (!content) return ''
   try {
@@ -261,6 +308,10 @@ const cleanVersionContent = (content: string): string => {
   cleaned = cleaned.replace(/\\"/g, '"')
   cleaned = cleaned.replace(/\\t/g, '\t')
   cleaned = cleaned.replace(/\\\\/g, '\\')
+
+  // 清理Markdown格式标记（用于纯文本显示）
+  cleaned = stripMarkdownFormatting(cleaned)
+
   return cleaned
 }
 
