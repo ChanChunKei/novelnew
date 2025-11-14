@@ -1912,10 +1912,14 @@ async def _call_writer_agent(
                 "content": response.get("content", ""),
                 "tool_calls": response["tool_calls"]
             })
-            messages.append({
-                "role": "tool",
-                "content": json.dumps(tool_results, ensure_ascii=False)
-            })
+
+            # ✅ 与Planner一致：分别回复每个tool_call并带上ID
+            for tool_call, result in zip(response["tool_calls"], tool_results):
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call["id"],
+                    "content": result
+                })
         else:
             # ✅ 验证返回格式：必须包含full_content字段
             if "full_content" not in response or not response["full_content"]:

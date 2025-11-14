@@ -20,9 +20,19 @@ _PREFERRED_CONTENT_KEYS: tuple[str, ...] = (
 
 
 def _normalize_version_content(raw_content: Any, metadata: Any) -> str:
-    text = _coerce_text(metadata)
+    text: Optional[str] = None
+
+    if metadata:
+        try:
+            text = _coerce_text(metadata)
+        except ValueError as exc:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning("Metadata不包含可写入的正文，已回退到raw_content: %s", exc)
+
     if not text:
         text = _coerce_text(raw_content)
+
     return text or ""
 
 
