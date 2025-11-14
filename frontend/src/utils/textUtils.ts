@@ -46,7 +46,7 @@ export function stripMarkdownFormatting(text: string): string {
 }
 
 /**
- * 规范化内容：解析JSON、处理转义字符（保留Markdown）
+ * 规范化内容：解析JSON、处理转义字符、清理误用的Markdown硬换行
  * 用于：版本预览、详情显示、编辑器初始化等需要保留格式的场景
  */
 export function normalizeContent(content: string): string {
@@ -68,6 +68,12 @@ export function normalizeContent(content: string): string {
   cleaned = cleaned.replace(/\\"/g, '"')
   cleaned = cleaned.replace(/\\t/g, '\t')
   cleaned = cleaned.replace(/\\\\/g, '\\')
+
+  // 3. 清理LLM误用的Markdown硬换行符
+  // 移除行尾的反斜杠+换行符（Markdown硬换行的误用）
+  cleaned = cleaned.replace(/\\\s*\n/g, '\n')
+  // 移除只包含反斜杠的空行（用 \ 代替空行的误用）
+  cleaned = cleaned.replace(/^\\\s*$/gm, '')
 
   return cleaned
 }
