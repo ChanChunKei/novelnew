@@ -34,60 +34,6 @@ import re
 logger = logging.getLogger(__name__)
 
 
-def strip_markdown_formatting(text: str) -> str:
-    """
-    移除文本中的Markdown格式标记，保留纯文本内容
-
-    处理的标记：
-    - 标题：## 、### 等
-    - 粗体：**文本** 或 __文本__
-    - 斜体：*文本* 或 _文本_
-    - 代码：`文本`
-    - 链接：[文本](url)
-    - 其他常见标记
-
-    Args:
-        text: 包含Markdown标记的文本
-
-    Returns:
-        清理后的纯文本
-    """
-    if not text:
-        return text
-
-    # 移除标题标记（##、###等），保留文本
-    text = re.sub(r'^#{1,6}\s+', '', text, flags=re.MULTILINE)
-
-    # 移除粗体标记 **text** 或 __text__
-    text = re.sub(r'\*\*(.+?)\*\*', r'\1', text)
-    text = re.sub(r'__(.+?)__', r'\1', text)
-
-    # 移除斜体标记 *text* 或 _text_（要在粗体之后处理）
-    text = re.sub(r'\*(.+?)\*', r'\1', text)
-    text = re.sub(r'(?<!\w)_(.+?)_(?!\w)', r'\1', text)
-
-    # 移除行内代码标记 `code`
-    text = re.sub(r'`(.+?)`', r'\1', text)
-
-    # 移除链接，保留文本 [text](url) -> text
-    text = re.sub(r'\[(.+?)\]\(.+?\)', r'\1', text)
-
-    # 移除图片 ![alt](url) -> alt
-    text = re.sub(r'!\[(.+?)\]\(.+?\)', r'\1', text)
-
-    # 移除引用标记 >
-    text = re.sub(r'^>\s+', '', text, flags=re.MULTILINE)
-
-    # 移除列表标记 - 或 * 或 数字.
-    text = re.sub(r'^[\*\-\+]\s+', '', text, flags=re.MULTILINE)
-    text = re.sub(r'^\d+\.\s+', '', text, flags=re.MULTILINE)
-
-    # 移除Markdown硬换行：行尾的反斜杠+换行符 (\ + \n)
-    text = re.sub(r'\\\s*\n', '\n', text)
-
-    return text
-
-
 class AutoGeneratorService:
     """
     自动生成器服务
@@ -919,72 +865,6 @@ class AutoGeneratorService:
                     # 优先提取full_content字段
                     if "full_content" in variant and variant["full_content"]:
                         full_content = variant["full_content"]
-
-                        # ✅ 防御性处理：检查full_content是否被错误地嵌套成JSON字符串
-                        if isinstance(full_content, str) and full_content.strip().startswith("{"):
-                            try:
-                                # 尝试解析，如果是JSON字符串，提取真正的内容
-                                nested = json.loads(full_content)
-                                if isinstance(nested, dict) and "full_content" in nested:
-                                    logger.warning(f"第 {next_chapter_number} 章版本 {idx+1}: 检测到嵌套JSON，自动提取")
-                                    full_content = nested["full_content"]
-                            except json.JSONDecodeError:
-                                # 不是JSON，保持原样
-                                pass
-
-                        # ✅ 检测Planner格式：防止错误地保存Planner的分析结果
-                        if isinstance(full_content, str):
-                            content_stripped = full_content.strip()
-                            if content_stripped.startswith("{") and content_stripped.endswith("}"):
-                                try:
-                                    parsed = json.loads(content_stripped)
-                                    # 检查是否包含Planner的典型字段
-                                    planner_fields = ['analysis', 'plan', 'queries_summary', 'notes_for_writer']
-                                    has_planner = sum(1 for f in planner_fields if f in parsed)
-
-                                    if has_planner >= 3:
-                                        logger.error(
-                                            f"❌ 第 {next_chapter_number} 章版本 {idx+1}: "
-                                            f"full_content是Planner格式而非章节正文！"
-                                            f"包含字段: {[f for f in planner_fields if f in parsed]}"
-                                        )
-                                        raise ValueError(
-                                            f"第 {next_chapter_number} 章版本 {idx+1} 生成失败："
-                                            f"full_content包含Planner格式内容（{has_planner}个planner字段），拒绝保存。"
-                                            f"这可能是Writer Agent错误地返回了Planner的分析结果。"
-                                        )
-                                except json.JSONDecodeError:
-                                    pass  # 不是JSON，继续正常流程
-
-                        # ✅ 处理双重转义：安全地只替换转义序列，不影响中文
-                        if isinstance(full_content, str) and ("\\" in full_content):
-                            original_escaped = full_content
-                            # 只替换常见的转义序列，不用 unicode_escape（会破坏中文）
-                            full_content = full_content.replace("\\n", "\n")
-                            full_content = full_content.replace("\\t", "\t")
-                            full_content = full_content.replace("\\r", "\r")
-                            full_content = full_content.replace('\\"', '"')
-                            full_content = full_content.replace("\\'", "'")
-                            full_content = full_content.replace("\\\\", "\\")
-
-                            if full_content != original_escaped:
-                                logger.warning(
-                                    f"第 {next_chapter_number} 章版本 {idx+1}: 检测到双重转义，已自动修复"
-                                )
-
-                        # ✅ 强制清理Markdown标记：无论是否检测到，都进行清理（防止漏检）
-                        if isinstance(full_content, str):
-                            original_content = full_content
-                            full_content = strip_markdown_formatting(full_content)
-
-                            # 如果内容发生了变化，说明清理了Markdown
-                            if full_content != original_content:
-                                logger.warning(
-                                    f"第 {next_chapter_number} 章版本 {idx+1}: 检测到并清理了Markdown标记\n"
-                                    f"  原始预览: {original_content[:100]}...\n"
-                                    f"  清理后预览: {full_content[:100]}..."
-                                )
-
                         contents.append(full_content)
 
                         # ✅ 新增：提取3Agent模式生成的summary（如果有）
@@ -1002,36 +882,6 @@ class AutoGeneratorService:
                         )
                     elif "content" in variant and variant["content"]:
                         content = variant["content"]
-
-                        # ✅ 处理双重转义：安全地只替换转义序列，不影响中文
-                        if isinstance(content, str) and ("\\" in content):
-                            original_escaped = content
-                            # 只替换常见的转义序列，不用 unicode_escape（会破坏中文）
-                            content = content.replace("\\n", "\n")
-                            content = content.replace("\\t", "\t")
-                            content = content.replace("\\r", "\r")
-                            content = content.replace('\\"', '"')
-                            content = content.replace("\\'", "'")
-                            content = content.replace("\\\\", "\\")
-
-                            if content != original_escaped:
-                                logger.warning(
-                                    f"第 {next_chapter_number} 章版本 {idx+1}: content字段检测到双重转义，已自动修复"
-                                )
-
-                        # ✅ 强制清理Markdown标记：无论是否检测到，都进行清理（防止漏检）
-                        if isinstance(content, str):
-                            original_content = content
-                            content = strip_markdown_formatting(content)
-
-                            # 如果内容发生了变化，说明清理了Markdown
-                            if content != original_content:
-                                logger.warning(
-                                    f"第 {next_chapter_number} 章版本 {idx+1}: content字段检测到并清理了Markdown标记\n"
-                                    f"  原始预览: {original_content[:100]}...\n"
-                                    f"  清理后预览: {content[:100]}..."
-                                )
-
                         contents.append(content)
 
                         # ✅ 新增：尝试提取summary（传统模式可能没有）
