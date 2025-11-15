@@ -120,8 +120,14 @@ const formattedBlueprint = computed(() => {
 
 // 将原有的内容生成逻辑提取为单独函数
 const generateBlueprintHTML = () => {
-
-  const blueprint = props.blueprint
+  if (!props.blueprint) {
+    return '<p class="text-center text-red-500">抱歉，生成大纲失败，未能获取到最终数据。</p>'
+  }
+  
+  // 使用非空断言，因为我们已经检查过了
+  const blueprint = props.blueprint!
+  
+  // 在这里 TypeScript 知道 blueprint 不是 null
 
   // Helper function to safely access nested properties
   const safe = (value: unknown, fallback = '待补充') => value || fallback
@@ -407,12 +413,12 @@ const generateBlueprintHTML = () => {
   // Header with title and badges
   const headerHTML = `
     <div class="text-center mb-8 p-6 bg-gradient-to-r from-indigo-500 to-purple-600 rounded-xl text-white">
-      <h1 class="text-4xl font-bold mb-4">${safe(blueprint.title, '未知标题')}</h1>
+      <h1 class="text-4xl font-bold mb-4">${safe(blueprint!.title, '未知标题')}</h1>
       <div class="flex flex-wrap justify-center gap-3 mb-4">
-        <span class="bg-white/20 backdrop-blur-sm px-4 py-2 rounded-full text-sm font-medium">${safe(blueprint.genre, '未指定')}</span>
-        <span class="bg-white/20 backdrop-blur-sm px-4 py-2 rounded-full text-sm font-medium">${safe(blueprint.style, '未指定')}</span>
-        <span class="bg-white/20 backdrop-blur-sm px-4 py-2 rounded-full text-sm font-medium">${safe(blueprint.tone, '未指定')}</span>
-        <span class="bg-white/20 backdrop-blur-sm px-4 py-2 rounded-full text-sm font-medium">${safe(blueprint.target_audience, '未指定')}</span>
+        <span class="bg-white/20 backdrop-blur-sm px-4 py-2 rounded-full text-sm font-medium">${safe(blueprint!.genre, '未指定')}</span>
+        <span class="bg-white/20 backdrop-blur-sm px-4 py-2 rounded-full text-sm font-medium">${safe(blueprint!.style, '未指定')}</span>
+        <span class="bg-white/20 backdrop-blur-sm px-4 py-2 rounded-full text-sm font-medium">${safe(blueprint!.tone, '未指定')}</span>
+        <span class="bg-white/20 backdrop-blur-sm px-4 py-2 rounded-full text-sm font-medium">${safe(blueprint!.target_audience, '未指定')}</span>
       </div>
     </div>
   `
@@ -423,11 +429,11 @@ const generateBlueprintHTML = () => {
     `
     <div class="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-lg p-5 mb-4">
       <h4 class="font-semibold text-blue-800 mb-2">一句话总结</h4>
-      <p class="text-lg italic text-blue-700">"${safe(blueprint.one_sentence_summary)}"</p>
+      <p class="text-lg italic text-blue-700">"${safe(blueprint!.one_sentence_summary)}"</p>
     </div>
     <div class="prose max-w-none">
       <h4 class="font-semibold text-gray-800 mb-3">完整简介</h4>
-      <p class="text-gray-700 leading-relaxed">${safe(blueprint.full_synopsis)}</p>
+      <p class="text-gray-700 leading-relaxed">${safe(blueprint!.full_synopsis)}</p>
     </div>
     `,
     icons.summary
@@ -435,8 +441,8 @@ const generateBlueprintHTML = () => {
 
   // Chapters section with enhanced styling - 按卷分组显示
   const chaptersHTML = (() => {
-    const chapters = blueprint.chapter_outline || []
-    const volumes = blueprint.volumes || []
+    const chapters = blueprint!.chapter_outline || []
+    const volumes = blueprint!.volumes || []
 
     // 如果没有章节，返回空提示
     if (chapters.length === 0) {
@@ -507,9 +513,9 @@ const generateBlueprintHTML = () => {
   return `
     ${headerHTML}
     ${summaryHTML}
-    ${createSection('世界设定', formatWorldSetting(blueprint.world_setting), icons.world)}
-    ${createSection('主要角色', formatCharacters(blueprint.characters || []), icons.characters)}
-    ${createSection('角色关系', formatRelationships(blueprint.relationships || []), icons.relationships)}
+    ${createSection('世界设定', formatWorldSetting(blueprint!.world_setting), icons.world)}
+    ${createSection('主要角色', formatCharacters(blueprint!.characters || []), icons.characters)}
+    ${createSection('角色关系', formatRelationships(blueprint!.relationships || []), icons.relationships)}
     ${createSection('章节大纲', chaptersHTML, icons.chapters)}
   `
 }
