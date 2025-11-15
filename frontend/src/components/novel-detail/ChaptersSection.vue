@@ -414,6 +414,7 @@ import { NovelAPI } from '@/api/novel'
 import { AdminAPI } from '@/api/admin'
 import { useRoute } from 'vue-router'
 import { marked } from 'marked'
+import { smartSanitize } from '@/utils/htmlSanitizer'
 
 interface ChapterItem {
   chapter_number: number
@@ -635,7 +636,9 @@ const isSelectedVersion = (versionKey: string | number, bestChoice?: number): bo
 const renderMarkdown = (text: string | null | undefined): string => {
   if (!text) return ''
   try {
-    return marked.parse(text, { breaks: true }) as string
+    const rawHTML = marked.parse(text, { breaks: true }) as string
+    // ✅ 安全修复：对Markdown渲染的HTML进行清理
+    return smartSanitize(rawHTML, 'markdown')
   } catch (error) {
     console.error('Markdown 渲染失败:', error)
     return text

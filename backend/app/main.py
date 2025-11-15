@@ -98,12 +98,19 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS 配置，生产环境建议改为具体域名
+# CORS 配置 - 安全设置，仅允许指定域名
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "http://localhost:3000",    # 开发环境前端
+        "http://localhost:5173",    # Vite开发服务器 
+        "http://127.0.0.1:3000",    # 本地开发
+        "http://127.0.0.1:5173",    # 本地开发
+        # 生产环境需要添加实际域名
+        # "https://your-domain.com", 
+    ],
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
     allow_headers=["*"],
 )
 

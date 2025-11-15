@@ -67,6 +67,7 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { globalAlert } from '@/composables/useAlert'
+import { smartSanitize } from '@/utils/htmlSanitizer'
 import type { Blueprint, Character, WorldSetting, Relationship, Volume } from '@/api/novel'
 
 interface DisplayField {
@@ -111,6 +112,14 @@ const formattedBlueprint = computed(() => {
   if (!props.blueprint) {
     return '<p class="text-center text-red-500">抱歉，生成大纲失败，未能获取到最终数据。</p>'
   }
+
+  // ✅ 安全修复：对于生成的HTML内容进行清理，防止XSS攻击
+  const rawHTML = generateBlueprintHTML()
+  return smartSanitize(rawHTML, 'html')
+})
+
+// 将原有的内容生成逻辑提取为单独函数
+const generateBlueprintHTML = () => {
 
   const blueprint = props.blueprint
 
@@ -503,5 +512,6 @@ const formattedBlueprint = computed(() => {
     ${createSection('角色关系', formatRelationships(blueprint.relationships || []), icons.relationships)}
     ${createSection('章节大纲', chaptersHTML, icons.chapters)}
   `
+}
 })
 </script>

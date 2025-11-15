@@ -315,7 +315,7 @@ class HybridAgentService:
                 tool_results = await asyncio.gather(*[
                     self._execute_tool(
                         tc.function.name,
-                        eval(tc.function.arguments),  # 将JSON字符串转为dict
+                        json.loads(tc.function.arguments),  # 安全的JSON解析，替代eval()
                         project_id
                     )
                     for tc in tool_calls

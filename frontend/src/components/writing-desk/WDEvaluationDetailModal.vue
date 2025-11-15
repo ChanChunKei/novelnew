@@ -74,6 +74,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import { smartSanitize } from '@/utils/htmlSanitizer'
 
 interface Props {
   show: boolean
@@ -115,6 +116,8 @@ const parseMarkdown = (text: string | null): string => {
   if (!parsed.includes('<p>')) {
     parsed = `<p>${parsed}</p>`
   }
-  return parsed
+  // ✅ 安全修复：对生成的HTML进行安全清理
+  return smartSanitize(parsed, 'html')
+}
 }
 </script>
