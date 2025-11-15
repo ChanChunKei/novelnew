@@ -1661,6 +1661,39 @@ async def _call_writer_agent(
                         f"期望包含 full_content 字段"
                     )
 
+            # ✅ 新增：强制验证full_content必须是字符串类型
+            full_content_value = response.get("full_content")
+            if not isinstance(full_content_value, str):
+                logger.error(
+                    f"❌ Writer返回的full_content类型错误（第{round_num + 1}轮）！\n"
+                    f"  期望类型: str (字符串)\n"
+                    f"  实际类型: {type(full_content_value)}\n"
+                    f"  实际值: {str(full_content_value)[:500]}...\n"
+                    f"  完整response字段: {list(response.keys())}"
+                )
+
+                # 检查是否是Planner格式的dict
+                if isinstance(full_content_value, dict):
+                    planner_keys = ["analysis", "plan", "queries_summary", "notes_for_writer"]
+                    found_planner = [k for k in planner_keys if k in full_content_value]
+                    if found_planner:
+                        logger.error(
+                            f"❌❌❌ 检测到Writer错误返回了Planner格式！\n"
+                            f"  full_content包含Planner字段: {found_planner}\n"
+                            f"  这是严重的格式错误，Writer应该返回纯文本字符串！"
+                        )
+
+                # 第一轮尝试重新生成
+                if round_num == 0:
+                    logger.warning("⚠️ 将进入第2轮，要求返回正确的字符串格式...")
+                    continue
+                else:
+                    # 第二轮还是错误，抛出异常
+                    raise ValueError(
+                        f"生成失败：Writer返回的full_content类型必须是字符串，"
+                        f"但收到了{type(full_content_value).__name__}类型"
+                    )
+
             # ✅ 清理内容格式，防止格式问题
             if "full_content" in response and response["full_content"]:
                 # 应用与前端相同的清理逻辑
