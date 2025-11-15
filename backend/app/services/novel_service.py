@@ -20,19 +20,19 @@ _PREFERRED_CONTENT_KEYS: tuple[str, ...] = (
 
 
 def _normalize_version_content(raw_content: Any, metadata: Any) -> str:
-    text: Optional[str] = None
+    """
+    从raw_content中提取章节正文内容。
 
-    if metadata:
-        try:
-            text = _coerce_text(metadata)
-        except ValueError as exc:
-            import logging
-            logger = logging.getLogger(__name__)
-            logger.warning("Metadata不包含可写入的正文，已回退到raw_content: %s", exc)
+    Args:
+        raw_content: 章节内容（从这里提取正文）
+        metadata: 元信息（仅用于保存到ChapterVersion.metadata，不用于提取正文）
 
-    if not text:
-        text = _coerce_text(raw_content)
-
+    Returns:
+        str: 提取后的章节正文
+    """
+    # ✅ 修复：直接从raw_content提取内容，metadata仅用于保存元信息
+    # metadata包含3Agent的对话历史、评分等，不应该用于提取章节正文
+    text = _coerce_text(raw_content)
     return text or ""
 
 
