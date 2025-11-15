@@ -130,6 +130,7 @@ import { marked } from 'marked'
 import { useNovelStore } from '@/stores/novel'
 import { globalAlert } from '@/composables/useAlert'
 import { logger } from '@/utils/logger'
+import { smartSanitize } from '@/utils/htmlSanitizer'
 import type { BlueprintGenerationResponse } from '@/api/novel'
 
 // 配置 marked
@@ -160,7 +161,9 @@ let timeoutTimer: NodeJS.Timeout | null = null
 
 // 渲染 Markdown
 const renderedAiMessage = computed(() => {
-  return marked.parse(props.aiMessage)
+  // ✅ 安全修复：清理Markdown渲染的HTML内容防止XSS攻击  
+  const rawHTML = marked.parse(props.aiMessage)
+  return smartSanitize(rawHTML, 'markdown')
 })
 
 // 动态加载文本

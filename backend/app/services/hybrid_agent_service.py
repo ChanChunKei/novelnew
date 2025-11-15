@@ -142,44 +142,126 @@ class HybridAgentService:
     ) -> str:
         """执行工具调用"""
         from app.services.novel_service import NovelService
+        from app.models.chapter import Chapter
+        from app.models.character_state import CharacterState
+        from app.models.world_setting import WorldSetting
+        from sqlalchemy.ext.asyncio import AsyncSession
+        from sqlalchemy import select, desc, and_, or_
+        from app.core.database import get_db
 
         try:
-            if tool_name == "get_character_info":
-                # TODO: 实现从数据库查询角色信息
-                name = arguments.get("name")
-                chapter_num = arguments.get("chapter_num")
-                return f"角色【{name}】信息：[暂未实现，需要查询character_states表]"
+            # 获取数据库会话
+            async for session in get_db():
+                if tool_name == "get_character_info":
+                    name = arguments.get("name")
+                    chapter_num = arguments.get("chapter_num")
+                    
+                    # 查询角色状态
+                    query = select(CharacterState).where(
+                        and_(
+                            CharacterState.project_id == project_id,
+                            CharacterState.character_name == name,
+                            CharacterState.chapter_number <= chapter_num if chapter_num else True
+                        )
+                    ).order_by(desc(CharacterState.chapter_number)).limit(1)
+                    
+                    result = await session.execute(query)
+                    character_state = result.scalar_one_or_none()
+                    
+                    if character_state:
+                        return f"角色【{name}】状态（第{character_state.chapter_number}章）：\n位置：{character_state.location}\n状态：{character_state.physical_state}\n情感：{character_state.emotional_state}\n关系：{character_state.relationships}\n技能：{character_state.abilities}"
+                    else:
+                        return f"角色【{name}】信息：暂无记录或未出现在前{chapter_num}章中"
 
-            elif tool_name == "search_chapters":
-                # TODO: 实现章节搜索
-                keyword = arguments.get("keyword")
-                limit = arguments.get("limit", 3)
-                return f"搜索关键词【{keyword}】的章节：[暂未实现，需要实现全文搜索]"
+                elif tool_name == "search_chapters":
+                    keyword = arguments.get("keyword")
+                    limit = arguments.get("limit", 3)
+                    
+                    # 在章节标题和内容中搜索关键词
+                    query = select(Chapter).where(
+                        and_(
+                            Chapter.project_id == project_id,
+                            or_(
+                                Chapter.title.ilike(f"%{keyword}%"),
+                                Chapter.content.ilike(f"%{keyword}%")
+                            )
+                        )
+                    ).order_by(Chapter.chapter_number).limit(limit)
+                    
+                    result = await session.execute(query)
+                    chapters = result.scalars().all()
+                    
+                    if chapters:
+                        summaries = []
+                        for chapter in chapters:
+                            # 提取相关片段
+                            content_preview = chapter.content[:200] + "..." if len(chapter.content) > 200 else chapter.content
+                            summaries.append(f"第{chapter.chapter_number}章：{chapter.title}\n{content_preview}")
+                        return f"找到{len(chapters)}个相关章节：\n" + "\n\n".join(summaries)
+                    else:
+                        return f"未找到包含关键词【{keyword}】的章节"
 
-            elif tool_name == "get_world_setting":
-                # TODO: 实现世界设定查询
-                tag = arguments.get("tag")
-                return f"世界设定【{tag}】：[暂未实现，需要查询world_settings表]"
+                elif tool_name == "get_world_setting":
+                    tag = arguments.get("tag")
+                    
+                    # 查询世界设定
+                    query = select(WorldSetting).where(
+                        and_(
+                            WorldSetting.project_id == project_id,
+                            or_(
+                                WorldSetting.category.ilike(f"%{tag}%"),
+                                WorldSetting.name.ilike(f"%{tag}%"),
+                                WorldSetting.description.ilike(f"%{tag}%")
+                            )
+                        )
+                    ).limit(5)
+                    
+                    result = await session.execute(query)
+                    settings = result.scalars().all()
+                    
+                    if settings:
+                        setting_info = []
+                        for setting in settings:
+                            setting_info.append(f"【{setting.category}】{setting.name}：{setting.description}")
+                        return f"世界设定【{tag}】相关信息：\n" + "\n".join(setting_info)
+                    else:
+                        return f"未找到与【{tag}】相关的世界设定"
 
-            elif tool_name == "get_recent_chapters":
-                # 这个可以直接实现
-                current_chapter = arguments.get("current_chapter")
-                count = arguments.get("count", 3)
+                elif tool_name == "get_recent_chapters":
+                    current_chapter = arguments.get("current_chapter")
+                    count = arguments.get("count", 3)
+                    
+                    # 获取最近几章内容
+                    start_chapter = max(1, current_chapter - count) if current_chapter else 1
+                    end_chapter = current_chapter - 1 if current_chapter else count
+                    
+                    query = select(Chapter).where(
+                        and_(
+                            Chapter.project_id == project_id,
+                            Chapter.chapter_number >= start_chapter,
+                            Chapter.chapter_number <= end_chapter
+                        )
+                    ).order_by(Chapter.chapter_number)
+                    
+                    result = await session.execute(query)
+                    chapters = result.scalars().all()
+                    
+                    if chapters:
+                        chapter_summaries = []
+                        for chapter in chapters:
+                            summary = chapter.content[:300] + "..." if len(chapter.content) > 300 else chapter.content
+                            chapter_summaries.append(f"第{chapter.chapter_number}章：{chapter.title}\n{summary}")
+                        return f"最近{len(chapters)}章内容摘要：\n" + "\n\n".join(chapter_summaries)
+                    else:
+                        return f"未找到最近{count}章的内容"
 
-                novel_service = NovelService()
-                # TODO: 获取最近N章的内容
-                return f"最近{count}章内容：[需要调用NovelService获取]"
-
-            elif tool_name == "check_foreshadowing":
-                # TODO: 实现伏笔检查
-                chapter_range = arguments.get("chapter_range")
-                return f"章节范围【{chapter_range}】的伏笔：[暂未实现]"
-
-            else:
-                return f"未知工具：{tool_name}"
+                else:
+                    return f"未知工具：{tool_name}"
+                
+                break  # 结束数据库会话循环
 
         except Exception as e:
-            return f"工具执行失败：{str(e)}"
+            return f"工具调用出错：{str(e)}"
 
     async def _agent_decision_round(
         self,
@@ -233,7 +315,7 @@ class HybridAgentService:
                 tool_results = await asyncio.gather(*[
                     self._execute_tool(
                         tc.function.name,
-                        eval(tc.function.arguments),  # 将JSON字符串转为dict
+                        json.loads(tc.function.arguments),  # 安全的JSON解析，替代eval()
                         project_id
                     )
                     for tc in tool_calls

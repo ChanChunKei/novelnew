@@ -112,6 +112,7 @@ import { marked } from 'marked'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import { getLatestUpdates } from '../api/updates'
+import { smartSanitize } from '../utils/htmlSanitizer'
 import type { UpdateLog } from '../api/updates'
 
 marked.setOptions({
@@ -119,7 +120,11 @@ marked.setOptions({
   breaks: true         // 将单个换行视为 <br>（常见于后端返回的段落）
 })
 
-const renderMarkdown = (md: string) => marked.parse(md)
+const renderMarkdown = (md: string) => {
+  // ✅ 安全修复：清理Markdown渲染的HTML内容防止XSS
+  const rawHTML = marked.parse(md)
+  return smartSanitize(rawHTML, 'markdown')
+}
 
 const router = useRouter()
 const authStore = useAuthStore()

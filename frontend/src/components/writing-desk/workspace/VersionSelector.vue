@@ -191,6 +191,7 @@
 import { computed } from 'vue'
 import type { Chapter, ChapterGenerationResponse, ChapterVersion } from '@/api/novel'
 import { normalizeContent } from '@/utils/textUtils'
+import { smartSanitize } from '@/utils/htmlSanitizer'
 
 interface Props {
   selectedChapter: Chapter | null
@@ -231,6 +232,8 @@ const parseMarkdown = (text: string): string => {
   if (!parsed.includes('<p>')) {
     parsed = `<p>${parsed}</p>`
   }
-  return parsed
+  // ✅ 安全修复：对生成的HTML进行安全清理
+  return smartSanitize(parsed, 'html')
+}
 }
 </script>

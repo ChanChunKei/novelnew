@@ -15,6 +15,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import { smartSanitize } from '@/utils/htmlSanitizer'
 
 interface Props {
   message: string
@@ -59,7 +60,9 @@ const parseMarkdown = (text: string): string => {
 
 const renderedMessage = computed(() => {
   if (props.type === 'ai') {
-    return parseMarkdown(props.message)
+    const parsed = parseMarkdown(props.message)
+    // ✅ 安全修复：清理HTML内容防止XSS攻击
+    return smartSanitize(parsed, 'markdown')
   }
   return props.message
 })
