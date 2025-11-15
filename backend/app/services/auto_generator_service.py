@@ -848,21 +848,37 @@ class AutoGeneratorService:
                     f"AI功能调用成功: CHAPTER_CONTENT_WRITING, 章节: {next_chapter_number}, 版本: {idx + 1}"
                 )
 
-                cleaned = remove_think_tags(response)
-                normalized = unwrap_markdown_json(cleaned)
-                try:
-                    parsed_json = json.loads(normalized)
-                    raw_versions.append(parsed_json)
-                except (json.JSONDecodeError, ValueError) as e:
-                    # ❌ 不再fallback到保存原始字符串，而是抛出异常
-                    logger.error(
-                        f"❌ 第 {next_chapter_number} 章版本 {idx + 1} JSON解析失败！\n"
-                        f"  错误: {e}\n"
-                        f"  normalized前500字: {normalized[:500]}...\n"
-                        f"  这可能是LLM返回了错误的JSON格式，或unwrap_markdown_json提取错误"
-                    )
+                # ✅ 核心改进：3Agent模式直接返回dict，不需要JSON解析！
+                # 判断response的类型
+                if isinstance(response, dict):
+                    # 3Agent模式：直接返回dict，不经过JSON序列化/反序列化
+                    # 优点：full_content是纯文本，直接传递，避免数据损坏
+                    logger.info(f"第 {next_chapter_number} 章版本 {idx + 1}: 收到dict格式（3Agent模式），直接使用")
+                    raw_versions.append(response)
+                elif isinstance(response, str):
+                    # 传统模式：返回JSON字符串，需要解析
+                    logger.info(f"第 {next_chapter_number} 章版本 {idx + 1}: 收到字符串格式（传统模式），进行JSON解析")
+                    cleaned = remove_think_tags(response)
+                    normalized = unwrap_markdown_json(cleaned)
+                    try:
+                        parsed_json = json.loads(normalized)
+                        raw_versions.append(parsed_json)
+                    except (json.JSONDecodeError, ValueError) as e:
+                        # ❌ 不再fallback到保存原始字符串，而是抛出异常
+                        logger.error(
+                            f"❌ 第 {next_chapter_number} 章版本 {idx + 1} JSON解析失败！\n"
+                            f"  错误: {e}\n"
+                            f"  normalized前500字: {normalized[:500]}...\n"
+                            f"  这可能是LLM返回了错误的JSON格式，或unwrap_markdown_json提取错误"
+                        )
+                        raise ValueError(
+                            f"第 {next_chapter_number} 章版本 {idx + 1} JSON解析失败: {str(e)}"
+                        )
+                else:
+                    # 未知类型
+                    logger.error(f"❌ 第 {next_chapter_number} 章版本 {idx + 1}: response类型未知: {type(response)}")
                     raise ValueError(
-                        f"第 {next_chapter_number} 章版本 {idx + 1} JSON解析失败: {str(e)}"
+                        f"第 {next_chapter_number} 章版本 {idx + 1}: response类型错误，期望dict或str，收到{type(response)}"
                     )
 
             # ✅ 提取full_content和summary字段（如果是3Agent模式生成的）
