@@ -119,5 +119,4 @@ const parseMarkdown = (text: string | null): string => {
   // ✅ 安全修复：对生成的HTML进行安全清理
   return smartSanitize(parsed, 'html')
 }
-}
 </script>

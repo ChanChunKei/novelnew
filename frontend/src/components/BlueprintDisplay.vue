@@ -513,5 +513,4 @@ const generateBlueprintHTML = () => {
     ${createSection('章节大纲', chaptersHTML, icons.chapters)}
   `
 }
-})
 </script>
