@@ -400,16 +400,25 @@ async def generate_chapter(
             cleaned = remove_think_tags(response)
             normalized = unwrap_markdown_json(cleaned)
             try:
-                return json.loads(normalized)
+                parsed_json = json.loads(normalized)
+                return parsed_json
             except json.JSONDecodeError as parse_err:
-                logger.warning(
-                    "项目 %s 第 %s 章第 %s 个版本 JSON 解析失败，将原始内容作为纯文本处理: %s",
+                # ❌ 不再fallback到保存原始字符串，而是抛出异常
+                logger.error(
+                    "❌ 项目 %s 第 %s 章第 %s 个版本 JSON解析失败！\n"
+                    "  错误: %s\n"
+                    "  normalized前500字: %s...\n"
+                    "  这可能是LLM返回了错误的JSON格式，或unwrap_markdown_json提取错误",
                     project_id,
                     request.chapter_number,
                     idx + 1,
                     parse_err,
+                    normalized[:500] if normalized else ""
                 )
-                return {"content": normalized}
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"第 {request.chapter_number} 章版本 {idx + 1} JSON解析失败: {str(parse_err)}"
+                )
         except HTTPException:
             raise
         except Exception as exc:
