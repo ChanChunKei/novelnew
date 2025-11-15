@@ -22,6 +22,60 @@ import re
 logger = logging.getLogger(__name__)
 
 
+def clean_markdown_in_novel_content(content: str) -> str:
+    """
+    清理小说内容中的Markdown标记
+
+    网文小说是纯文本格式，不应包含Markdown标记
+
+    Args:
+        content: 原始内容
+
+    Returns:
+        清理后的内容
+    """
+    if not content:
+        return content
+
+    cleaned = content
+
+    # 1. 清理标题标记 ## ### 等
+    # 将 "## 标题文字" 替换为 "标题文字"
+    cleaned = re.sub(r'^#{1,6}\s+', '', cleaned, flags=re.MULTILINE)
+
+    # 2. 清理粗体标记 **文字**
+    # 将 "**文字**" 替换为 "文字"
+    cleaned = re.sub(r'\*\*([^*]+)\*\*', r'\1', cleaned)
+
+    # 3. 清理斜体标记 *文字*
+    # 但要保留场景分隔符 *** 和 ---
+    # 先保护场景分隔符
+    cleaned = re.sub(r'^\s*\*{3,}\s*$', '---SCENE-DIVIDER---', cleaned, flags=re.MULTILINE)
+    # 清理单个和双个星号（斜体）
+    cleaned = re.sub(r'(?<!\*)\*(?!\*)([^*]+)\*(?!\*)', r'\1', cleaned)
+    # 恢复场景分隔符
+    cleaned = cleaned.replace('---SCENE-DIVIDER---', '---')
+
+    # 4. 清理引用标记 > 文字
+    cleaned = re.sub(r'^>\s+', '', cleaned, flags=re.MULTILINE)
+
+    # 5. 清理列表标记
+    # 无序列表 - 文字 或 * 文字
+    cleaned = re.sub(r'^[\-\*]\s+', '', cleaned, flags=re.MULTILINE)
+    # 有序列表 1. 文字
+    cleaned = re.sub(r'^\d+\.\s+', '', cleaned, flags=re.MULTILINE)
+
+    # 6. 清理代码块标记 ``` 或 `
+    cleaned = re.sub(r'```[\w]*\n?', '', cleaned)
+    cleaned = re.sub(r'`([^`]+)`', r'\1', cleaned)
+
+    # 7. 清理链接和图片标记 [文字](url) 和 ![alt](url)
+    cleaned = re.sub(r'!\[([^\]]*)\]\([^)]+\)', r'\1', cleaned)
+    cleaned = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', cleaned)
+
+    return cleaned
+
+
 # ==================== 三Agent对话模式常量配置 ====================
 MAX_REWRITE_ITERATIONS = 5  # 最多重写次数
 MAX_PLANNER_TOOL_ROUNDS = 3  # 思考Agent最多工具调用轮数
@@ -1610,8 +1664,9 @@ async def _call_writer_agent(
                 f"响应前200字: {response_str[:200]}"
             )
 
-            # 直接返回内容，不做检测
-            return {"full_content": response_str}
+            # 清理Markdown标记后返回
+            cleaned_str = clean_markdown_in_novel_content(response_str)
+            return {"full_content": cleaned_str}
         except ValueError as e:
             # 捕获所有ValueError（包括Planner格式检测）
             if round_num == 0:
@@ -1706,13 +1761,13 @@ async def _call_writer_agent(
                 # 应用与前端相同的清理逻辑
                 original_content = response["full_content"]
                 cleaned_content = original_content
-                
+
                 # 处理转义字符
                 cleaned_content = cleaned_content.replace('\\n', '\n')
                 cleaned_content = cleaned_content.replace('\\"', '"')
                 cleaned_content = cleaned_content.replace('\\t', '\t')
                 cleaned_content = cleaned_content.replace('\\\\', '\\')
-                
+
                 # 修复3Agent模式的格式问题
                 # 修复行尾孤立的反斜杠（如 "## 标题\" → "## 标题"）
                 cleaned_content = re.sub(r'\\\s*$', '', cleaned_content, flags=re.MULTILINE)
@@ -1720,12 +1775,15 @@ async def _call_writer_agent(
                 cleaned_content = re.sub(r'^\s*\\\s*$', '', cleaned_content, flags=re.MULTILINE)
                 # 修复反斜杠+换行的组合（如 "\n" → 正常换行）
                 cleaned_content = cleaned_content.replace('\\n', '\n')
-                
+
+                # ✅ 新增：清理Markdown标记（##、**、* 等）
+                cleaned_content = clean_markdown_in_novel_content(cleaned_content)
+
                 response["full_content"] = cleaned_content
-                
+
                 if cleaned_content != original_content:
                     logger.info(f"✅ 清理了Writer返回内容的格式问题（长度: {len(original_content)} → {len(cleaned_content)}）")
-            
+
             logger.debug(f"✅ 第 {chapter_number} 章: Writer返回full_content")
             return response
 
