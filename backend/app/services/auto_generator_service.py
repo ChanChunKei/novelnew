@@ -865,6 +865,31 @@ class AutoGeneratorService:
                     # 优先提取full_content字段
                     if "full_content" in variant and variant["full_content"]:
                         full_content = variant["full_content"]
+
+                        # ✅ 强制类型检查：full_content必须是字符串
+                        if not isinstance(full_content, str):
+                            logger.error(
+                                f"❌ 第 {next_chapter_number} 章版本 {idx+1}: full_content类型错误！\n"
+                                f"  期望类型: str (字符串)\n"
+                                f"  实际类型: {type(full_content)}\n"
+                                f"  实际值: {str(full_content)[:500]}..."
+                            )
+
+                            # 检查是否是Planner格式
+                            if isinstance(full_content, dict):
+                                planner_keys = ["analysis", "plan", "queries_summary"]
+                                found = [k for k in planner_keys if k in full_content]
+                                if found:
+                                    logger.error(
+                                        f"❌❌❌ 检测到Planner格式被错误保存到full_content！\n"
+                                        f"  包含Planner字段: {found}"
+                                    )
+
+                            raise ValueError(
+                                f"第 {next_chapter_number} 章版本 {idx+1}: full_content必须是字符串，"
+                                f"但收到了{type(full_content).__name__}类型"
+                            )
+
                         contents.append(full_content)
 
                         # ✅ 新增：提取3Agent模式生成的summary（如果有）
@@ -882,6 +907,20 @@ class AutoGeneratorService:
                         )
                     elif "content" in variant and variant["content"]:
                         content = variant["content"]
+
+                        # ✅ 强制类型检查：content必须是字符串
+                        if not isinstance(content, str):
+                            logger.error(
+                                f"❌ 第 {next_chapter_number} 章版本 {idx+1}: content类型错误！\n"
+                                f"  期望类型: str (字符串)\n"
+                                f"  实际类型: {type(content)}\n"
+                                f"  实际值: {str(content)[:500]}..."
+                            )
+                            raise ValueError(
+                                f"第 {next_chapter_number} 章版本 {idx+1}: content必须是字符串，"
+                                f"但收到了{type(content).__name__}类型"
+                            )
+
                         contents.append(content)
 
                         # ✅ 新增：尝试提取summary（传统模式可能没有）
