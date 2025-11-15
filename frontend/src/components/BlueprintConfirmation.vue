@@ -162,7 +162,7 @@ let timeoutTimer: NodeJS.Timeout | null = null
 // 渲染 Markdown
 const renderedAiMessage = computed(() => {
   // ✅ 安全修复：清理Markdown渲染的HTML内容防止XSS攻击  
-  const rawHTML = marked.parse(props.aiMessage)
+  const rawHTML = marked.parse(props.aiMessage) as string
   return smartSanitize(rawHTML, 'markdown')
 })
 

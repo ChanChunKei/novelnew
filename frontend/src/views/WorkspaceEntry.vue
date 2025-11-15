@@ -122,7 +122,7 @@ marked.setOptions({
 
 const renderMarkdown = (md: string) => {
   // ✅ 安全修复：清理Markdown渲染的HTML内容防止XSS
-  const rawHTML = marked.parse(md)
+  const rawHTML = marked.parse(md) as string
   return smartSanitize(rawHTML, 'markdown')
 }
 
