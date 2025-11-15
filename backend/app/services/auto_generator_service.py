@@ -851,10 +851,19 @@ class AutoGeneratorService:
                 cleaned = remove_think_tags(response)
                 normalized = unwrap_markdown_json(cleaned)
                 try:
-                    raw_versions.append(json.loads(normalized))
+                    parsed_json = json.loads(normalized)
+                    raw_versions.append(parsed_json)
                 except (json.JSONDecodeError, ValueError) as e:
-                    logger.debug(f"Failed to parse JSON response, using raw content: {e}")
-                    raw_versions.append({"content": normalized})
+                    # ❌ 不再fallback到保存原始字符串，而是抛出异常
+                    logger.error(
+                        f"❌ 第 {next_chapter_number} 章版本 {idx + 1} JSON解析失败！\n"
+                        f"  错误: {e}\n"
+                        f"  normalized前500字: {normalized[:500]}...\n"
+                        f"  这可能是LLM返回了错误的JSON格式，或unwrap_markdown_json提取错误"
+                    )
+                    raise ValueError(
+                        f"第 {next_chapter_number} 章版本 {idx + 1} JSON解析失败: {str(e)}"
+                    )
 
             # ✅ 提取full_content和summary字段（如果是3Agent模式生成的）
             contents = []
