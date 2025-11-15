@@ -74,6 +74,14 @@ export function normalizeContent(content: string): string {
   cleaned = cleaned.replace(/\\\s*\n/g, '\n')
   // 移除只包含反斜杠的空行（用 \ 代替空行的误用）
   cleaned = cleaned.replace(/^\\\s*$/gm, '')
+  
+  // 4. ✅ 新增：修复3Agent模式的格式问题
+  // 修复行尾孤立的反斜杠（如 "## 标题\" → "## 标题"）
+  cleaned = cleaned.replace(/\\\s*$/gm, '')
+  // 修复纯反斜杠行（如 "\" → ""）
+  cleaned = cleaned.replace(/^\s*\\\s*$/gm, '')
+  // 修复反斜杠+换行的组合（如 "\n" → 正常换行）
+  cleaned = cleaned.replace(/\\\n/g, '\n')
 
   return cleaned
 }

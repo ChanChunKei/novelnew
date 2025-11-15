@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..config.ai_function_config import AIFunctionType
 from ..services.ai_orchestrator import AIOrchestrator
 from ..services.llm_service import LLMService
+from ..utils.json_utils import remove_think_tags, unwrap_markdown_json, sanitize_json_like_text
 import re
 
 logger = logging.getLogger(__name__)
@@ -1585,8 +1586,16 @@ async def _call_writer_agent(
             response_format="json_object" if is_final_round else None,
         )
         
+        # ✅ 增强：清理响应文本，去除think标签和提取JSON
+        cleaned_response = remove_think_tags(response_str)
+        cleaned_response = unwrap_markdown_json(cleaned_response)
+        
+        # ✅ 如果是最终轮，进一步清理JSON格式
+        if is_final_round:
+            cleaned_response = sanitize_json_like_text(cleaned_response)
+        
         try:
-            response = json.loads(response_str)
+            response = json.loads(cleaned_response)
         except json.JSONDecodeError as e:
             # JSON解析失败，将原始响应作为内容（需要清理）
             logger.warning(
@@ -1652,7 +1661,31 @@ async def _call_writer_agent(
                         f"期望包含 full_content 字段"
                     )
 
-            # 直接返回响应，不做检测
+            # ✅ 清理内容格式，防止格式问题
+            if "full_content" in response and response["full_content"]:
+                # 应用与前端相同的清理逻辑
+                original_content = response["full_content"]
+                cleaned_content = original_content
+                
+                # 处理转义字符
+                cleaned_content = cleaned_content.replace('\\n', '\n')
+                cleaned_content = cleaned_content.replace('\\"', '"')
+                cleaned_content = cleaned_content.replace('\\t', '\t')
+                cleaned_content = cleaned_content.replace('\\\\', '\\')
+                
+                # 修复3Agent模式的格式问题
+                # 修复行尾孤立的反斜杠（如 "## 标题\" → "## 标题"）
+                cleaned_content = re.sub(r'\\\s*$', '', cleaned_content, flags=re.MULTILINE)
+                # 修复纯反斜杠行（如 "\" → ""）
+                cleaned_content = re.sub(r'^\s*\\\s*$', '', cleaned_content, flags=re.MULTILINE)
+                # 修复反斜杠+换行的组合（如 "\n" → 正常换行）
+                cleaned_content = cleaned_content.replace('\\n', '\n')
+                
+                response["full_content"] = cleaned_content
+                
+                if cleaned_content != original_content:
+                    logger.info(f"✅ 清理了Writer返回内容的格式问题（长度: {len(original_content)} → {len(cleaned_content)}）")
+            
             logger.debug(f"✅ 第 {chapter_number} 章: Writer返回full_content")
             return response
 
