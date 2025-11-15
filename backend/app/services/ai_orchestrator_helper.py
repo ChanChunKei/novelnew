@@ -1436,13 +1436,15 @@ async def _generate_with_agent_dialogue_impl(
             final_score = item.get("content", {}).get("score", 0)
             break
 
+    # ✅ 核心修改：直接返回dict，不要JSON序列化！
+    # 这样可以避免JSON序列化/反序列化过程中的数据混乱
     result = {
-        "full_content": final_content,
+        "full_content": final_content,  # 这里已经是纯文本字符串
         "summary": summarizer_result.get("summary", ""),
         "metadata": {
             "conversation_history": conversation_history,
             "iterations": iterations,
-            "final_score": final_score,  # ✅ 使用更健壮的提取逻辑
+            "final_score": final_score,
             "total_time_seconds": round(total_time, 2)
         }
     }
@@ -1455,7 +1457,12 @@ async def _generate_with_agent_dialogue_impl(
         f"  总耗时: {total_time:.2f}秒 ({total_time/60:.1f}分钟)"
     )
 
-    return json.dumps(result, ensure_ascii=False)
+    # ✅ 直接返回dict，不转JSON字符串
+    # 好处：
+    # 1. Writer返回的full_content是纯文本，直接传递，不经过JSON序列化
+    # 2. 避免json.dumps/json.loads过程中的数据损坏
+    # 3. 外部代码直接使用dict，不需要解析JSON
+    return result
 
 
 # ==================== Agent调用辅助函数 ====================
