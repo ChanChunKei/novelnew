@@ -118,12 +118,23 @@ def _clean_string(text: str) -> str:
 
     if stripped.startswith('"') and stripped.endswith('"') and len(stripped) >= 2:
         stripped = stripped[1:-1]
-    return (
+
+    # 处理转义字符
+    cleaned = (
         stripped.replace("\\n", "\n")
         .replace("\\t", "\t")
         .replace('\\"', '"')
         .replace("\\\\", "\\")
     )
+
+    # ✅ 修复：清理Markdown硬换行的误用（行尾反斜杠和单独一行的反斜杠）
+    import re
+    # 移除行尾的孤立反斜杠（如 "文本内容\" → "文本内容"）
+    cleaned = re.sub(r'\\\s*$', '', cleaned, flags=re.MULTILINE)
+    # 移除只包含反斜杠的空行（如独立的 "\" → ""）
+    cleaned = re.sub(r'^\s*\\\s*$', '', cleaned, flags=re.MULTILINE)
+
+    return cleaned
 
 from fastapi import HTTPException, status
 from sqlalchemy import delete, func, select, update
