@@ -59,40 +59,40 @@ npm run format                    # 代码格式化 (Prettier)
 ```
 
 ### 诊断和调试工具
+
+> **注意**: 所有脚本已整理到 `scripts/` 目录，详见 `scripts/README.md`
+
 ```bash
 # 系统状态检查
-python check_config.py            # 检查配置
-python check_db_status.py         # 检查数据库状态
-python check_gemini_status.py     # 检查Gemini API状态
-python backend/check_user_config.py # 检查用户配置
+python scripts/diagnostics/check_config.py            # 检查配置
+python scripts/diagnostics/check_db_status.py         # 检查数据库状态
+python scripts/diagnostics/check_gemini_status.py     # 检查Gemini API状态
+python backend/check_user_config.py                   # 检查用户配置
 
 # 3Agent模式调试
-python diagnose_3agent.py         # 诊断3Agent问题
-python diagnose_planner_issue.py  # 诊断Planner问题
-python diagnose_writer_output.py  # 诊断Writer输出
-python diagnose_saved_content.py  # 诊断保存内容
-python test_3agent_full_content_save.py  # 测试内容保存
-python test_3agent_tools.py       # 测试3Agent工具
-python test_planner_detection.py  # 测试Planner检测
-python test_fix_validation.py     # 测试修复验证
-python add_3agent_debug_logging.py # 添加3Agent调试日志
+python scripts/diagnostics/diagnose_3agent.py         # 诊断3Agent问题
+python scripts/diagnostics/diagnose_planner_issue.py  # 诊断Planner问题
+python scripts/diagnostics/diagnose_saved_content.py  # 诊断保存内容
+python scripts/testing/test_3agent_full_content_save.py  # 测试内容保存
+python scripts/testing/test_3agent_tools.py           # 测试3Agent工具
+python scripts/testing/test_planner_detection.py      # 测试Planner检测
+python scripts/testing/test_fix_validation.py         # 测试修复验证
+python scripts/utilities/add_3agent_debug_logging.py  # 添加3Agent调试日志
 
 # 章节内容相关
-python diagnose_chapter_issue.py  # 章节问题诊断
-python diagnose_latest_chapter.py # 诊断最新章节
-python debug_chapter_content.py   # 调试章节内容
-python check_chapter_content_bug.py # 检查章节内容Bug
-python batch_check_all_chapters.py # 批量检查所有章节
-python quick_check_full_content.py # 快速检查完整内容
-python show_latest_generation_flow.py # 查看最新生成流程
+python scripts/diagnostics/diagnose_chapter_issue.py  # 章节问题诊断
+python scripts/diagnostics/diagnose_latest_chapter.py # 诊断最新章节
+python scripts/diagnostics/debug_chapter_content.py   # 调试章节内容
+python scripts/diagnostics/batch_check_all_chapters.py # 批量检查所有章节
+python scripts/diagnostics/quick_check_full_content.py # 快速检查完整内容
+python scripts/diagnostics/show_latest_generation_flow.py # 查看最新生成流程
 
 # 任务和性能检查
-python check_invalid_tasks.py    # 检查无效任务
-python check_invalid_tasks_simple.py # 简单检查无效任务
-python check_task_performance.py  # 检查任务性能
+python scripts/diagnostics/check_invalid_tasks.py     # 检查无效任务
+python scripts/diagnostics/check_task_performance.py  # 检查任务性能
 
 # API密钥测试
-python test_gemini_key.py         # 测试Gemini密钥
+python scripts/testing/test_gemini_key.py             # 测试Gemini密钥
 ```
 
 ## 代码库结构
@@ -217,22 +217,25 @@ novelnew/
 │   ├── 番茄小说自动上传流程.md  # 上传流程文档
 │   ├── 番茄登录优化方案.md      # 登录优化文档
 │   └── 项目清理报告-2025-11-01.md # 项目清理报告
-├── scripts/                     # 脚本工具
-│   └── deploy.sh                # 部署脚本
+├── scripts/                     # 脚本工具（已整理分类）
+│   ├── diagnostics/             # 诊断工具（20个）
+│   ├── testing/                 # 测试工具（8个）
+│   ├── fixes/                   # 修复工具（6个）
+│   ├── utilities/               # 实用工具（5个）
+│   └── deploy/                  # 部署脚本（7个）
 ├── tests/                       # 集成测试
 ├── CLAUDE.md                    # AI助手指南（本文件）
 ├── README.md                    # 项目说明
-├── DEPLOYMENT.md                # 部署指南
-└── SERVER_DEPLOY.sh             # 服务器部署脚本
+└── DEPLOYMENT.md                # 部署指南
 ```
 
 ## 系统架构概览
 
 ### 核心服务架构
-- **AI路由系统** (`ai_orchestrator_helper.py`): 智能分配不同AI任务到最合适的模型（Claude、Gemini、DeepSeek等）
-- **3Agent协作模式** (`hybrid_agent_service.py`): Planner → Writer → Reviewer 三步式AI协作生成高质量章节内容
+- **AI路由+3Agent系统** (`ai_orchestrator_helper.py`): 智能分配AI任务 + Planner → Writer → Reviewer 三步式协作生成
 - **双模式自动生成器** (`auto_generator_service.py`): 基础模式（快速生成）+ 增强模式（异步深度分析）
 - **分卷管理系统** (`volume_split_service.py`): 支持多分卷创作，每个分卷独立的人物关系和世界观快照
+- **LLM统一接口** (`llm_service.py`): 统一的LLM调用接口，支持多个AI提供商
 
 ### 数据流向
 1. **蓝图生成**: 用户创意 → AI路由器选择Claude → 生成完整小说蓝图
@@ -877,9 +880,9 @@ python full_diagnostic.py > diagnostic_report.txt
 
 ---
 
-**最后更新**: 2025-11-18
+**最后更新**: 2025-11-21
 **维护者**: Project Team
-**版本**: v1.1.0
+**版本**: v1.2.0
 
 ## 快速参考卡
 
@@ -894,26 +897,27 @@ python backend/run_migration.py                       # 迁移数据库
 python backend/reload_prompts.py                      # 重载提示词
 
 # 快速诊断
-python check_config.py                                # 检查配置
-python diagnose_3agent.py                             # 诊断3Agent
-python batch_check_all_chapters.py                    # 检查所有章节
+python scripts/diagnostics/check_config.py            # 检查配置
+python scripts/diagnostics/diagnose_3agent.py         # 诊断3Agent
+python scripts/diagnostics/batch_check_all_chapters.py # 检查所有章节
 
 # 测试
 pytest backend/tests/                                 # 运行测试
-python test_3agent_direct.py                          # 测试3Agent
+python scripts/testing/test_3agent_tools.py           # 测试3Agent工具
 ```
 
 ### 核心文件位置
-- **AI路由**: `backend/app/services/ai_orchestrator_helper.py`
-- **3Agent**: `backend/app/services/hybrid_agent_service.py`
+- **AI路由+3Agent**: `backend/app/services/ai_orchestrator_helper.py`
 - **自动生成**: `backend/app/services/auto_generator_service.py`
 - **番茄上传**: `backend/app/services/fanqie_publisher_service.py`
+- **LLM服务**: `backend/app/services/llm_service.py`
 - **主应用**: `backend/app/main.py`
 - **前端入口**: `frontend/src/main.ts`
+- **脚本目录**: `scripts/` (详见 `scripts/README.md`)
 
 ### 紧急故障处理
 1. 服务无法启动 → 检查 `.env` 配置和数据库连接
-2. 3Agent生成失败 → 运行 `python diagnose_3agent.py`
-3. 章节内容为空 → 运行 `python quick_check_full_content.py`
+2. 3Agent生成失败 → 运行 `python scripts/diagnostics/diagnose_3agent.py`
+3. 章节内容为空 → 运行 `python scripts/diagnostics/quick_check_full_content.py`
 4. 数据库锁定 → 检查WAL模式，重启服务
-5. API密钥错误 → 运行 `python test_gemini_key.py` 验证密钥
+5. API密钥错误 → 运行 `python scripts/testing/test_gemini_key.py` 验证密钥
