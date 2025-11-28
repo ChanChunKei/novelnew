@@ -1560,6 +1560,11 @@ class AutoGeneratorService:
                 reviewer_provider = agent_config.get("agent_reviewer_provider")
                 reviewer_model = agent_config.get("agent_reviewer_model")
 
+                # ✅ 新增：创建日志回调函数，将工具执行日志持久化到数据库
+                async def log_callback(log_type: str, message: str):
+                    """日志回调函数，用于记录RAG工具执行日志到数据库"""
+                    await cls._log(db, task.id, log_type, message)
+
                 result = await generate_outline_with_agents(
                     db_session=db,
                     project_id=task.project_id,
@@ -1580,6 +1585,7 @@ class AutoGeneratorService:
                     writer_model=writer_model,
                     reviewer_provider=reviewer_provider,
                     reviewer_model=reviewer_model,
+                    log_callback=log_callback,  # ✅ 传递 log_callback
                 )
 
                 # 从result中提取章节数据和元数据
