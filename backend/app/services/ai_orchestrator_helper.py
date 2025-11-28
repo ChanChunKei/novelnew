@@ -771,7 +771,9 @@ async def _tool_search_chapters(
         logger.warning(f"⚠️ Gemini RAG 搜索失败，回退到数据库搜索: {str(e)}")
 
     # 方式2：libsql 向量检索（如果配置了）
-    if settings.rag_provider == "libsql" and settings.vector_store_enabled:
+    # 修复：只要本地配置或环境变量指定了 libsql，且向量库可用，就尝试搜索
+    should_use_libsql = (rag_provider == "libsql") or (settings.rag_provider == "libsql")
+    if should_use_libsql and settings.vector_store_enabled:
         try:
             from ..services.vector_store_service import VectorStoreService
             from ..services.llm_service import LLMService
