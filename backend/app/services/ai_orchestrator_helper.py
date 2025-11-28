@@ -670,12 +670,25 @@ async def _execute_tools(
     async def execute_single_tool(tool_call: Dict) -> str:
         """执行单个工具调用"""
         function_name = tool_call["function"]["name"]
-        arguments_str = tool_call["function"]["arguments"]
+        arguments_raw = tool_call["function"]["arguments"]
 
-        try:
-            arguments = json.loads(arguments_str)
-        except json.JSONDecodeError:
-            return f"错误：无法解析参数 {arguments_str}"
+        # ✅ 修复：兼容不同 provider 的返回格式
+        # - OpenAI/DeepSeek: arguments 是 JSON 字符串
+        # - Gemini: arguments 可能已经是字典对象
+        if isinstance(arguments_raw, dict):
+            # 已经是字典，直接使用
+            arguments = arguments_raw
+        elif isinstance(arguments_raw, str):
+            # 是字符串，尝试解析 JSON
+            try:
+                arguments = json.loads(arguments_raw)
+            except json.JSONDecodeError:
+                logger.error(f"无法解析工具参数 JSON: {arguments_raw[:200]}")
+                return f"错误：无法解析参数 {arguments_raw[:100]}..."
+        else:
+            # 未知类型
+            logger.error(f"工具参数类型错误: {type(arguments_raw)}, 值: {arguments_raw}")
+            return f"错误：参数类型不支持 ({type(arguments_raw).__name__})"
 
         logger.info(f"执行工具: {function_name}，参数: {arguments}")
 
@@ -764,7 +777,8 @@ async def _tool_search_chapters(
             from ..services.llm_service import LLMService
 
             vector_service = VectorStoreService()
-            llm_service = LLMService(db=db_session)
+            # ✅ 修复：LLMService 构造函数接受 session 作为位置参数，不是 db= 关键字参数
+            llm_service = LLMService(db_session)
 
             # ✅ 修复：需要先将查询文本转为向量
             keyword_embedding = await llm_service.get_embedding(keyword)
@@ -2218,6 +2232,8 @@ async def _generate_outline_with_agents_impl(
         user_id=user_id,
         timeout=120.0,
         temperature=planner_temp,
+        project_id=project_id,  # ✅ 传递 project_id 支持工具调用
+        start_chapter=start_chapter,  # ✅ 传递 start_chapter 支持工具调用
     )
 
     logger.info(f"规划Agent完成，耗时: {time.time() - planner_start:.2f}秒")
@@ -2263,6 +2279,8 @@ async def _generate_outline_with_agents_impl(
             user_id=user_id,
             timeout=180.0,
             temperature=writer_temp,
+            project_id=project_id,  # ✅ 传递 project_id 支持工具调用
+            start_chapter=start_chapter,  # ✅ 传递 start_chapter 支持工具调用
         )
 
         logger.info(f"写作Agent完成，耗时: {time.time() - writer_start:.2f}秒")
@@ -2422,13 +2440,19 @@ async def _call_outline_planner_agent(
     user_id: int,
     timeout: float,
     temperature: float,
+    project_id: Optional[str] = None,
+    start_chapter: Optional[int] = None,
 ) -> Dict[str, Any]:
     """
-    调用大纲规划Agent
+    调用大纲规划Agent（支持工具调用）
 
     上下文：项目蓝图 + 已完成章节摘要 + 分卷信息
     任务：分析项目，规划章节结构和节奏
+    
+    ✅ 新增：支持RAG工具调用，可查询历史章节验证伏笔、角色状态等
     """
+    from ..config.agent_tools import NOVEL_AGENT_TOOLS
+    
     # 从数据库读取prompt
     planner_prompt = await get_agent_prompt_from_db(llm_service.db_session, "planner", is_outline=True)
 
@@ -2437,36 +2461,85 @@ async def _call_outline_planner_agent(
         {"role": "user", "content": context}
     ]
 
-    response_str = await llm_service.invoke(
-        provider=provider,
-        model=model,
-        messages=messages,
-        temperature=temperature,
-        timeout=timeout,
-        user_id=user_id,
-        response_format="json_object",
-    )
-
-    try:
-        response = json.loads(response_str)
-        return response
-    except json.JSONDecodeError as e:
-        logger.error(
-            f"规划Agent返回非JSON格式，响应前200字: {response_str[:200]}",
-            exc_info=True
+    # ✅ 工具调用循环（最多3轮，避免过多API调用）
+    MAX_TOOL_ROUNDS = 3
+    
+    for round_num in range(MAX_TOOL_ROUNDS):
+        is_final_round = (round_num == MAX_TOOL_ROUNDS - 1)
+        
+        # 最后一轮强制JSON格式
+        response_str = await llm_service.invoke(
+            provider=provider,
+            model=model,
+            messages=messages,
+            temperature=temperature,
+            timeout=timeout,
+            user_id=user_id,
+            tools=NOVEL_AGENT_TOOLS if not is_final_round else None,
+            response_format="json_object" if is_final_round else None,
         )
-        # ✅ 优化：返回更完整的默认结构，包含Writer需要的所有字段
-        return {
-            "analysis": response_str[:500],
-            "chapter_plan": {"total_chapters": 50, "structure": "线性", "key_points": []},
-            "rhythm": "均衡节奏",
-            "notes": "解析失败，使用默认规划",
-            # ✅ 添加Writer需要的字段
-            "volume_title_suggestion": "新的征程",
-            "volume_theme": "成长与挑战",
-            "world_expansion": {"new_locations": [], "new_systems": []},
-            "character_development": {"focus_characters": [], "development_arcs": []}
-        }
+        
+        try:
+            response = json.loads(response_str)
+        except json.JSONDecodeError:
+            if is_final_round:
+                logger.error(
+                    f"大纲规划Agent最终轮返回非JSON格式，响应前200字: {response_str[:200]}",
+                    exc_info=True
+                )
+                # 返回默认结构
+                return {
+                    "analysis": response_str[:500],
+                    "chapter_plan": {"total_chapters": 50, "structure": "线性", "key_points": []},
+                    "rhythm": "均衡节奏",
+                    "notes": "解析失败，使用默认规划",
+                    "volume_title_suggestion": "新的征程",
+                    "volume_theme": "成长与挑战",
+                    "world_expansion": {"new_locations": [], "new_systems": []},
+                    "character_development": {"focus_characters": [], "development_arcs": []}
+                }
+            logger.warning(
+                f"大纲规划Agent第{round_num + 1}轮返回非JSON（可能是文本响应），"
+                f"响应前200字: {response_str[:200]}"
+            )
+            return {"analysis": response_str}
+        
+        # 检查是否有工具调用
+        if not is_final_round and "tool_calls" in response and response["tool_calls"]:
+            logger.info(f"大纲规划Agent第{round_num + 1}轮调用了 {len(response['tool_calls'])} 个工具")
+            
+            # 执行工具
+            tool_results = await _execute_tools(
+                db_session=llm_service.db_session,
+                tool_calls=response["tool_calls"],
+                project_id=project_id,
+                chapter_number=start_chapter,
+            )
+
+            # 添加到对话
+            messages.append({
+                "role": "assistant",
+                "content": response.get("content", ""),
+                "tool_calls": response["tool_calls"]
+            })
+
+            # 为每个tool_call添加单独的tool消息
+            for tool_call, result in zip(response["tool_calls"], tool_results):
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call["id"],
+                    "content": result
+                })
+            
+            logger.debug(f"工具执行完成，继续第{round_num + 2}轮")
+        else:
+            # 没有工具调用，返回结果
+            logger.info(f"大纲规划Agent第{round_num + 1}轮完成（无工具调用）")
+            return response
+    
+    # 所有轮次结束，返回最后一次响应
+    logger.info(f"大纲规划Agent达到最大轮次（{MAX_TOOL_ROUNDS}），返回最终结果")
+    return response
 
 
 async def _call_outline_writer_agent(
@@ -2477,12 +2550,18 @@ async def _call_outline_writer_agent(
     user_id: int,
     timeout: float,
     temperature: float,
+    project_id: Optional[str] = None,
+    start_chapter: Optional[int] = None,
 ) -> Dict[str, Any]:
     """
-    调用大纲撰写Agent
+    调用大纲撰写Agent（支持工具调用）
 
     任务：根据规划方案撰写详细的章节大纲（标题+摘要）
+    
+    ✅ 新增：支持RAG工具调用，可查询历史章节验证细节、角色状态等
     """
+    from ..config.agent_tools import NOVEL_AGENT_TOOLS
+    
     # 从数据库读取prompt
     writer_prompt = await get_agent_prompt_from_db(llm_service.db_session, "writer", is_outline=True)
 
@@ -2491,29 +2570,87 @@ async def _call_outline_writer_agent(
         {"role": "user", "content": context}
     ]
 
-    response_str = await llm_service.invoke(
-        provider=provider,
-        model=model,
-        messages=messages,
-        temperature=temperature,
-        timeout=timeout,
-        user_id=user_id,
-        response_format="json_object",
-    )
-
-    try:
-        response = json.loads(response_str)
-        # ✅ 验证必需字段
-        if "chapters" not in response or not response["chapters"]:
-            logger.error(f"❌ 写作Agent返回的JSON缺少chapters字段或为空")
-            raise ValueError("大纲撰写失败：返回的JSON缺少chapters字段")
-        return response
-    except json.JSONDecodeError as e:
-        logger.error(
-            f"❌ 写作Agent返回非JSON格式，响应前200字: {response_str[:200]}",
-            exc_info=True
+    # ✅ 工具调用循环（最多2轮，Writer很少需要多次查询）
+    MAX_TOOL_ROUNDS = 2
+    
+    for round_num in range(MAX_TOOL_ROUNDS):
+        is_final_round = (round_num == MAX_TOOL_ROUNDS - 1)
+        
+        # 最后一轮强制JSON格式
+        response_str = await llm_service.invoke(
+            provider=provider,
+            model=model,
+            messages=messages,
+            temperature=temperature,
+            timeout=timeout,
+            user_id=user_id,
+            tools=NOVEL_AGENT_TOOLS if not is_final_round else None,
+            response_format="json_object" if is_final_round else None,
         )
-        raise ValueError(f"大纲撰写失败：返回格式错误 - {str(e)}")
+
+        try:
+            response = json.loads(response_str)
+        except json.JSONDecodeError:
+            if is_final_round:
+                logger.error(
+                    f"❌ 大纲写作Agent最终轮返回非JSON格式，响应前200字: {response_str[:200]}",
+                    exc_info=True
+                )
+                raise ValueError(f"大纲撰写失败：返回格式错误")
+            logger.warning(
+                f"大纲写作Agent第{round_num + 1}轮返回非JSON（可能是文本响应），"
+                f"响应前200字: {response_str[:200]}"
+            )
+            # 非最终轮，继续下一轮
+            continue
+        
+        # 检查必需字段（仅最终结果需要验证）
+        if is_final_round or ("tool_calls" not in response or not response["tool_calls"]):
+            # 最终结果或无工具调用，验证字段
+            if "chapters" not in response or not response["chapters"]:
+                if is_final_round:
+                    logger.error(f"❌ 写作Agent返回的JSON缺少chapters字段或为空")
+                    raise ValueError("大纲撰写失败：返回的JSON缺少chapters字段")
+            else:
+                # 成功返回
+                logger.info(f"大纲写作Agent第{round_num + 1}轮完成，生成 {len(response.get('chapters', []))} 章大纲")
+                return response
+        
+        # 有工具调用
+        if "tool_calls" in response and response["tool_calls"]:
+            logger.info(f"大纲写作Agent第{round_num + 1}轮调用了 {len(response['tool_calls'])} 个工具")
+            
+            # 执行工具
+            tool_results = await _execute_tools(
+                db_session=llm_service.db_session,
+                tool_calls=response["tool_calls"],
+                project_id=project_id,
+                chapter_number=start_chapter,
+            )
+
+            # 添加到对话
+            messages.append({
+                "role": "assistant",
+                "content": response.get("content", ""),
+                "tool_calls": response["tool_calls"]
+            })
+
+            # 为每个tool_call添加单独的tool消息
+            for tool_call, result in zip(response["tool_calls"], tool_results):
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call["id"],
+                    "content": result
+                })
+            
+            logger.debug(f"工具执行完成，继续第{round_num + 2}轮")
+        else:
+            # 没有工具调用但也没有chapters，继续下一轮
+            logger.warning(f"大纲写作Agent第{round_num + 1}轮既没有工具调用也没有返回有效章节，继续下一轮")
+    
+    # 所有轮次结束，返回最后一次响应（即使可能不完整）
+    logger.warning(f"大纲写作Agent达到最大轮次（{MAX_TOOL_ROUNDS}），强制返回最终结果")
+    return response
 
 
 async def _call_outline_reviewer_agent(

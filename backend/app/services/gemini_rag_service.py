@@ -16,6 +16,7 @@ Gemini Semantic Retrieval API 集成服务
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from dataclasses import dataclass
@@ -182,7 +183,11 @@ class GeminiRAGService:
             corpus_path = f"corpora/{display_name}"
             try:
                 request = glm.GetCorpusRequest(name=corpus_path)
-                corpus = self._client.get_corpus(request=request)
+                # ✅ 修复：使用 asyncio.to_thread 避免阻塞事件循环
+                corpus = await asyncio.to_thread(
+                    self._client.get_corpus,
+                    request=request
+                )
                 logger.info(f"📚 找到已存在的 Corpus: {corpus.name}")
                 return corpus.name
             except Exception:
@@ -193,11 +198,16 @@ class GeminiRAGService:
             request = glm.CreateCorpusRequest(
                 corpus=glm.Corpus(display_name=display_name)
             )
-            corpus = self._client.create_corpus(request=request)
+            # ✅ 修复：使用 asyncio.to_thread 避免阻塞事件循环
+            corpus = await asyncio.to_thread(
+                self._client.create_corpus,
+                request=request
+            )
             logger.info(f"✅ 创建 Corpus 成功: {corpus.name}")
             return corpus.name
 
         except Exception as e:
+
             logger.error(f"❌ 确保 Corpus 存在失败: {e}")
             return None
 
@@ -248,7 +258,11 @@ class GeminiRAGService:
                     ],
                 ),
             )
-            document = self._client.create_document(request=request)
+            # ✅ 修复：使用 asyncio.to_thread 避免阻塞事件循环
+            document = await asyncio.to_thread(
+                self._client.create_document,
+                request=request
+            )
 
             # 创建 chunk（实际内容）
             chunk_request = glm.CreateChunkRequest(
@@ -257,7 +271,11 @@ class GeminiRAGService:
                     data=glm.ChunkData(string_value=document_content)
                 ),
             )
-            self._client.create_chunk(request=chunk_request)
+            # ✅ 修复：使用 asyncio.to_thread 避免阻塞事件循环
+            await asyncio.to_thread(
+                self._client.create_chunk,
+                request=chunk_request
+            )
 
             logger.info(f"✅ 章节入库成功: 第{chapter_number}章 {chapter_title}")
             return True
@@ -298,10 +316,28 @@ class GeminiRAGService:
                 query=query,
                 results_count=top_k,
             )
-            response = self._client.query_corpus(request=request)
+            # ✅ 修复：使用 asyncio.to_thread 避免阻塞事件循环
+            # 这是最关键的修复，解决"查找不了信息"的问题
+            logger.info(f"🔍 开始 Gemini RAG 搜索: corpus={corpus_name}, query='{query}', top_k={top_k}")
+            response = await asyncio.to_thread(
+                self._client.query_corpus,
+                request=request
+            )
 
             # 解析结果
             search_results = []
+            # ✅ 添加诊断日志：检查响应结构
+            if not hasattr(response, 'relevant_chunks'):
+                logger.warning(f"⚠️ Gemini API 响应缺少 relevant_chunks 字段: {type(response)}")
+                return []
+            
+            if not response.relevant_chunks:
+                logger.warning(f"⚠️ Gemini RAG 未找到相关结果: query='{query}', corpus={corpus_name}")
+                logger.info(f"💡 提示: 检查该项目是否已有章节入库，或尝试更通用的查询词")
+                return []
+            
+            logger.debug(f"Gemini API 返回 {len(response.relevant_chunks)} 个相关块")
+            
             for item in response.relevant_chunks:
                 # 提取元数据
                 chapter_number = 0
@@ -338,12 +374,15 @@ class GeminiRAGService:
                     relevance_score=relevance_score,
                     metadata={"raw_item": str(item)},
                 ))
+                
+                # ✅ 添加详细日志：每个结果的摘要
+                logger.debug(f"  - 第{chapter_number}章 \"{chapter_title}\": 相关度={relevance_score:.3f}")
 
-            logger.info(f"🔍 搜索完成: 查询='{query}', 结果数={len(search_results)}")
+            logger.info(f"✅ Gemini RAG 搜索成功: 查询='{query}', 结果数={len(search_results)}")
             return search_results
 
         except Exception as e:
-            logger.error(f"❌ 搜索失败: query='{query}', error={e}")
+            logger.error(f"❌ Gemini RAG 搜索失败: query='{query}', corpus={corpus_name}, error={e}", exc_info=True)
             return []
 
     async def delete_corpus(self, project_id: str) -> bool:
@@ -365,7 +404,11 @@ class GeminiRAGService:
             # 构建 corpus 路径并删除
             corpus_path = f"corpora/{display_name}"
             request = glm.DeleteCorpusRequest(name=corpus_path)
-            self._client.delete_corpus(request=request)
+            # ✅ 修复：使用 asyncio.to_thread 避免阻塞事件循环
+            await asyncio.to_thread(
+                self._client.delete_corpus,
+                request=request
+            )
             logger.info(f"🗑️  删除 Corpus 成功: {corpus_path}")
             return True
 
@@ -402,7 +445,11 @@ class GeminiRAGService:
         try:
             # 列出该 corpus 下的所有文档
             request = glm.ListDocumentsRequest(parent=corpus_name)
-            documents = self._client.list_documents(request=request)
+            # ✅ 修复：使用 asyncio.to_thread 避免阻塞事件循环
+            documents = await asyncio.to_thread(
+                self._client.list_documents,
+                request=request
+            )
 
             for doc in documents:
                 # 检查元数据
@@ -411,7 +458,11 @@ class GeminiRAGService:
                         if meta.key == "chapter_number" and int(meta.numeric_value) == chapter_number:
                             # 删除文档
                             delete_request = glm.DeleteDocumentRequest(name=doc.name)
-                            self._client.delete_document(request=delete_request)
+                            # ✅ 修复：使用 asyncio.to_thread 避免阻塞事件循环
+                            await asyncio.to_thread(
+                                self._client.delete_document,
+                                request=delete_request
+                            )
                             logger.info(f"🗑️  删除章节成功: 第{chapter_number}章")
                             return True
 
