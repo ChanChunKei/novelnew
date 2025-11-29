@@ -73,7 +73,7 @@
         <h1 class="text-4xl md:text-5xl font-bold text-gray-800 mb-4">拯救小说家：创作中心</h1>
         <p class="text-lg text-gray-600 mb-12">从一个新灵感开始，或继续打磨你的世界。</p>
 
-        <div class="grid md:grid-cols-2 gap-8 max-w-3xl mx-auto">
+        <div class="grid md:grid-cols-2 gap-8 max-w-4xl mx-auto">
           <!-- 灵感模式卡片 -->
           <div
             @click="goToInspiration"
@@ -95,10 +95,19 @@
           <!-- 批量任务调度卡片 -->
           <div
             @click="goToBatchScheduler"
-            class="group p-8 bg-white/70 backdrop-blur-xl rounded-2xl shadow-lg hover:shadow-2xl transition-all duration-300 transform hover:-translate-y-2 cursor-pointer md:col-span-2"
+            class="group p-8 bg-white/70 backdrop-blur-xl rounded-2xl shadow-lg hover:shadow-2xl transition-all duration-300 transform hover:-translate-y-2 cursor-pointer"
           >
             <h2 class="text-2xl font-bold text-purple-600 mb-3">📅 批量任务调度</h2>
             <p class="text-gray-600">一键启动所有项目的自动生成任务，智能错开时间，避免冲突。</p>
+          </div>
+
+          <!-- 定时自动生成器卡片 -->
+          <div
+            @click="goToScheduledGenerator"
+            class="group p-8 bg-white/70 backdrop-blur-xl rounded-2xl shadow-lg hover:shadow-2xl transition-all duration-300 transform hover:-translate-y-2 cursor-pointer"
+          >
+            <h2 class="text-2xl font-bold text-amber-600 mb-3">⏰ 定时自动生成器</h2>
+            <p class="text-gray-600">配置每日定时生成与番茄上传，支持暂停、恢复和立即触发。</p>
           </div>
         </div>
       </div>
@@ -184,5 +193,9 @@ const goToWorkspace = () => {
 
 const goToBatchScheduler = () => {
   router.push('/batch-scheduler')
+}
+
+const goToScheduledGenerator = () => {
+  router.push('/scheduled-generator')
 }
 </script>

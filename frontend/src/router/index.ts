@@ -84,6 +84,12 @@ const router = createRouter({
       component: () => import('../components/BatchTaskScheduler.vue'),
       meta: { requiresAuth: true },
     },
+    {
+      path: '/scheduled-generator',
+      name: 'scheduled-generator',
+      component: () => import('../components/ScheduledGenerator.vue'),
+      meta: { requiresAuth: true },
+    },
   ],
 })
 
