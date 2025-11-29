@@ -27,6 +27,7 @@ export const ragConfigApi = {
     // 更新系统配置
     upsertSystemConfig: (key: string, value: string, description?: string) => {
         return request.put(`/api/admin/system-configs/${encodeURIComponent(key)}`, {
+            key,
             value,
             description
         })
