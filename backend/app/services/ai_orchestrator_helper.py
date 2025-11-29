@@ -774,46 +774,22 @@ async def _tool_search_chapters(
 
     # ✅ 修复1：提前初始化 rag_provider，避免异常时 UnboundLocalError
     rag_provider = settings.rag_provider  # 从配置获取默认值
-
-    # 方式1：Gemini Semantic Retrieval（优先，检查配置）
-    # ✅ 修改：从数据库或环境变量读取配置
+    
+    # 尝试从数据库读取实时配置
     try:
         from ..repositories.system_config_repository import SystemConfigRepository
-        from ..services.gemini_rag_service import GeminiRAGService
-
         repo = SystemConfigRepository(db_session)
         rag_provider_record = await repo.get_by_key("rag.provider")
-        rag_provider = rag_provider_record.value if rag_provider_record else os.getenv("RAG_PROVIDER", "libsql")
-
-        if rag_provider.strip().lower() == "gemini":
-            # ✅ 修改：传递 db_session 而不是 api_key
-            gemini_service = GeminiRAGService(db_session=db_session)
-
-            results = await gemini_service.search(
-                project_id=project_id,
-                query=keyword,
-                top_k=limit
-            )
-
-            if results:
-                formatted_results = []
-                for item in results:
-                    formatted_results.append(
-                        f"【第{item.chapter_number}章】{item.chapter_title}\n"
-                        f"相关度: {item.relevance_score:.2f}\n"
-                        f"内容片段:\n{item.content_snippet}...\n"
-                    )
-                logger.info(f"✅ Gemini RAG 搜索成功: query='{keyword}', 结果数={len(results)}")
-                return "\n\n".join(formatted_results)
-            else:
-                logger.warning(f"⚠️ Gemini RAG 搜索无结果，回退到数据库搜索")
+        if rag_provider_record:
+            rag_provider = rag_provider_record.value
     except Exception as e:
-        logger.warning(f"⚠️ Gemini RAG 搜索失败，回退到数据库搜索: {str(e)}")
+        logger.warning(f"读取RAG配置失败，使用默认值: {e}")
 
-    # 方式2：libsql 向量检索（如果配置了）
-    # 修复：只要本地配置或环境变量指定了 libsql，且向量库可用，就尝试搜索
-    should_use_libsql = (rag_provider == "libsql") or (settings.rag_provider == "libsql")
-    if should_use_libsql and settings.vector_store_enabled:
+    # 方式1：向量库检索（优先：LibSQL 或 SiliconFlow）
+    # ✅ 修改：支持 siliconflow 和 libsql
+    should_use_vector_store = rag_provider in ["libsql", "siliconflow"] or settings.rag_provider in ["libsql", "siliconflow"]
+    
+    if should_use_vector_store and settings.vector_store_enabled:
         try:
             from ..services.vector_store_service import VectorStoreService
             from ..services.llm_service import LLMService
@@ -842,10 +818,39 @@ async def _tool_search_chapters(
                         f"相关度: {chunk.score:.2f}\n"
                         f"内容片段:\n{chunk.content[:500]}...\n"
                     )
-                logger.info(f"✅ libsql 向量搜索成功: query='{keyword}', 结果数={len(results)}")
+                logger.info(f"✅ 向量库搜索成功 ({rag_provider}): query='{keyword}', 结果数={len(results)}")
                 return "\n\n".join(formatted_results)
         except Exception as e:
-            logger.warning(f"⚠️ libsql 向量检索失败，回退到数据库搜索: {str(e)}")
+            logger.warning(f"⚠️ 向量库检索失败 ({rag_provider})，尝试其他方式: {str(e)}")
+
+    # 方式2：Gemini Semantic Retrieval（次选）
+    if rag_provider.strip().lower() == "gemini":
+        try:
+            from ..services.gemini_rag_service import GeminiRAGService
+
+            # ✅ 修改：传递 db_session 而不是 api_key
+            gemini_service = GeminiRAGService(db_session=db_session)
+
+            results = await gemini_service.search(
+                project_id=project_id,
+                query=keyword,
+                top_k=limit
+            )
+
+            if results:
+                formatted_results = []
+                for item in results:
+                    formatted_results.append(
+                        f"【第{item.chapter_number}章】{item.chapter_title}\n"
+                        f"相关度: {item.relevance_score:.2f}\n"
+                        f"内容片段:\n{item.content_snippet}...\n"
+                    )
+                logger.info(f"✅ Gemini RAG 搜索成功: query='{keyword}', 结果数={len(results)}")
+                return "\n\n".join(formatted_results)
+            else:
+                logger.warning(f"⚠️ Gemini RAG 搜索无结果")
+        except Exception as e:
+            logger.warning(f"⚠️ Gemini RAG 搜索失败: {str(e)}")
 
     # 方式2：数据库全文搜索（fallback）
     try:
