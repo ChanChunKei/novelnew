@@ -151,6 +151,8 @@
             </div>
           </div>
 
+          <p v-if="!status" class="text-sm text-gray-500 mt-3">启动定时任务后，将在此显示运行进度与统计。</p>
+
           <!-- 当前运行中的书籍 -->
           <div v-if="status?.currently_running && status.currently_running.length > 0" class="mt-6">
             <h3 class="text-lg font-semibold mb-3">正在生成</h3>

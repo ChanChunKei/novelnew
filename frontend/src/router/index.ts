@@ -111,6 +111,7 @@ router.beforeEach(async (to, from, next) => {
   if (requiresAuth && !isAuthenticated) {
     next('/login')
   } else if (requiresAdmin && !isAdmin) {
+    window.alert('需要管理员权限才能访问该页面')
     next('/') // Redirect to a non-admin page if not an admin
   } else if (isAuthenticated && mustChangePassword) {
     if (to.name !== 'admin' || to.query.tab !== 'password') {
