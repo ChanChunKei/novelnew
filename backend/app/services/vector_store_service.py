@@ -131,7 +131,7 @@ class VectorStoreService:
                 content TEXT NOT NULL,
                 embedding BLOB NOT NULL,
                 metadata TEXT,
-                created_at INTEGER DEFAULT (unixepoch())
+                created_at INTEGER DEFAULT (strftime('%s','now'))
             )
             """,
             """
@@ -146,7 +146,7 @@ class VectorStoreService:
                 title TEXT NOT NULL,
                 summary TEXT NOT NULL,
                 embedding BLOB NOT NULL,
-                created_at INTEGER DEFAULT (unixepoch())
+                created_at INTEGER DEFAULT (strftime('%s','now'))
             )
             """,
             """

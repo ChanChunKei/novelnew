@@ -632,10 +632,15 @@ async def select_chapter_version(
         if settings.vector_store_enabled and settings.rag_provider in {"libsql", "siliconflow"}:
             try:
                 ingestion_service = ChapterIngestionService(llm_service=llm_service)
+                title = (
+                    getattr(chapter, "title", None)
+                    or (selected.metadata.get("title") if selected.metadata else None)
+                    or ""
+                )
                 await ingestion_service.ingest_chapter(
                     project_id=project_id,
                     chapter_number=chapter.chapter_number,
-                    title=chapter.title or selected.metadata.get("title") if selected.metadata else chapter.title,
+                    title=title,
                     content=selected.content,
                     summary=chapter.real_summary,
                     user_id=current_user.id,
