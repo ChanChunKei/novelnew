@@ -23,6 +23,14 @@ from .system_config import SystemConfig
 from .auto_generator import AutoGeneratorTask, AutoGeneratorLog
 from .async_task import PendingAnalysis, AnalysisNotification
 from .story_metrics import ChapterStoryMetrics  # ✅ 修复3：导入新模型
+from .scheduled_generator import (
+    ScheduledGeneratorConfig,
+    ScheduledGeneratorQueue,
+    ScheduledGeneratorLog,
+    ScheduledGeneratorStatus,
+    GenerationMode,
+    QueueItemStatus,
+)
 
 __all__ = [
     "AdminSetting",
@@ -48,4 +56,10 @@ __all__ = [
     "PendingAnalysis",
     "AnalysisNotification",
     "ChapterStoryMetrics",
+    "ScheduledGeneratorConfig",
+    "ScheduledGeneratorQueue",
+    "ScheduledGeneratorLog",
+    "ScheduledGeneratorStatus",
+    "GenerationMode",
+    "QueueItemStatus",
 ]

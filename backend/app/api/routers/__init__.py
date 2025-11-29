@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from . import admin, auth, auto_generator, llm_config, novels, updates, writer, async_analysis, ai_routing, volume_management
+from . import admin, auth, auto_generator, llm_config, novels, updates, writer, async_analysis, ai_routing, volume_management, scheduled_generator
 
 api_router = APIRouter()
 
@@ -17,3 +17,5 @@ api_router.include_router(async_analysis.router)
 api_router.include_router(ai_routing.router)
 # ✅ 注册分卷管理路由
 api_router.include_router(volume_management.router)
+# ✅ 注册定时自动生成器路由
+api_router.include_router(scheduled_generator.router)
