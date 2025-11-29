@@ -56,6 +56,13 @@
     </div>
     <div class="absolute top-4 right-4 flex space-x-2">
         <router-link
+          v-if="authStore.user?.is_admin"
+          to="/system"
+          class="px-4 py-2 text-indigo-600 hover:text-indigo-800 hover:bg-indigo-50 rounded-lg transition-colors flex items-center gap-2 cursor-pointer border border-indigo-100"
+        >
+          系统管理
+        </router-link>
+        <router-link
           to="/settings"
           class="px-4 py-2 text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-lg transition-colors flex items-center gap-2 cursor-pointer"
         >
@@ -108,6 +115,16 @@
           >
             <h2 class="text-2xl font-bold text-amber-600 mb-3">⏰ 定时自动生成器</h2>
             <p class="text-gray-600">配置每日定时生成与番茄上传，支持暂停、恢复和立即触发。</p>
+          </div>
+
+          <!-- 系统管理（仅管理员可见） -->
+          <div
+            v-if="authStore.user?.is_admin"
+            @click="goToSystemManagement"
+            class="group p-8 bg-white/70 backdrop-blur-xl rounded-2xl shadow-lg hover:shadow-2xl transition-all duration-300 transform hover:-translate-y-2 cursor-pointer"
+          >
+            <h2 class="text-2xl font-bold text-blue-700 mb-3">🛠️ 系统管理</h2>
+            <p class="text-gray-600">访问 AI 配置、监控和异步任务等管理员功能。</p>
           </div>
         </div>
       </div>
@@ -197,5 +214,9 @@ const goToBatchScheduler = () => {
 
 const goToScheduledGenerator = () => {
   router.push('/scheduled-generator')
+}
+
+const goToSystemManagement = () => {
+  router.push('/system')
 }
 </script>
