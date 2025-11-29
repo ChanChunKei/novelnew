@@ -644,8 +644,8 @@ class AutoGeneratorService:
                     joinedload(Project.blueprint),  # 蓝图信息
                     selectinload(Project.characters),  # 角色列表
                     selectinload(Project.relationships_),  # 人物关系
-                    selectinload(Project.volumes)  # 分卷信息
-                    # ❌ 不再预加载所有章节和版本，改为按需查询
+                    selectinload(Project.volumes),  # 分卷信息
+                    selectinload(Project.chapters)  # ✅ 修复greenlet错误：预加载chapters避免懒加载
                 )
             )
             project = result.scalar_one_or_none()
@@ -2176,8 +2176,12 @@ class AutoGeneratorService:
             .where(Project.id == task.project_id)
             .options(
                 selectinload(Project.outlines),
+                selectinload(Project.conversations),
                 joinedload(Project.blueprint),
-                selectinload(Project.volumes)
+                selectinload(Project.characters),
+                selectinload(Project.relationships_),
+                selectinload(Project.volumes),
+                selectinload(Project.chapters)  # ✅ 修复greenlet错误：预加载chapters避免懒加载
             )
         )
         project = result.scalar_one_or_none()
