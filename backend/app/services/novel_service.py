@@ -697,10 +697,22 @@ class NovelService:
 
         blueprint_schema = self._build_blueprint_schema(project)
 
-        # ✅ 性能优化：打开项目时不加载章节列表，改为按需加载
-        # 避免200+章节项目打开时卡顿
-        # 章节数据通过 get_project_section(section='chapters') 按需获取
-        chapters_schema: List[ChapterSchema] = []
+        # ✅ 性能优化：返回章节元数据（不含content/versions），避免大文本传输
+        # 完整章节内容通过 get_chapter(chapter_number) 按需获取
+        outlines_map = {outline.chapter_number: outline for outline in project.outlines}
+        chapters_map = {chapter.chapter_number: chapter for chapter in project.chapters}
+        chapter_numbers = sorted(set(outlines_map.keys()) | set(chapters_map.keys()))
+
+        chapters_schema: List[ChapterSchema] = [
+            self._build_chapter_schema(
+                project,
+                number,
+                outlines_map=outlines_map,
+                chapters_map=chapters_map,
+                include_content=False,  # 不包含完整内容，只返回元数据
+            )
+            for number in chapter_numbers
+        ]
 
         return NovelProjectSchema(
             id=project.id,
@@ -709,7 +721,7 @@ class NovelService:
             initial_prompt=project.initial_prompt or "",
             conversation_history=conversations,
             blueprint=blueprint_schema,
-            chapters=chapters_schema,  # 空列表，按需加载
+            chapters=chapters_schema,  # 章节元数据列表
         )
 
     async def _touch_project(self, project_id: str) -> None:
