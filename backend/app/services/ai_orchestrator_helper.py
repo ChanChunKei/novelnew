@@ -1631,9 +1631,9 @@ async def _call_planner_agent(
             # 执行工具
             tool_results = await _execute_tools(
                 db_session=llm_service.db_session,
-                tool_calls=response["tool_calls"],
                 project_id=project_id,
                 chapter_number=chapter_number,
+                tool_calls=response["tool_calls"],
             )
 
             # 添加到对话
@@ -1737,9 +1737,9 @@ async def _call_writer_agent(
             # 执行工具
             tool_results = await _execute_tools(
                 db_session=llm_service.db_session,
-                tool_calls=response["tool_calls"],
                 project_id=project_id,
                 chapter_number=chapter_number,
+                tool_calls=response["tool_calls"],
             )
             
             # 添加到对话
@@ -2577,9 +2577,9 @@ async def _call_outline_planner_agent(
             # 执行工具
             tool_results = await _execute_tools(
                 db_session=llm_service.db_session,
-                tool_calls=response["tool_calls"],
                 project_id=project_id,
                 chapter_number=start_chapter,
+                tool_calls=response["tool_calls"],
                 log_callback=log_callback,  # ✅ 传递 log_callback
             )
 
@@ -2698,9 +2698,9 @@ async def _call_outline_writer_agent(
             # 执行工具
             tool_results = await _execute_tools(
                 db_session=llm_service.db_session,
-                tool_calls=response["tool_calls"],
                 project_id=project_id,
                 chapter_number=start_chapter,
+                tool_calls=response["tool_calls"],
                 log_callback=log_callback,  # ✅ 传递 log_callback
             )
 

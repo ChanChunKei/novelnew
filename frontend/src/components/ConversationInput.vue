@@ -30,10 +30,10 @@
         <div class="w-full relative">
           <textarea
             v-model="textInput"
-            :placeholder="isManualInput ? '请输入您的想法...' : '选择上方选项或点击"我要输入"'"
+            :placeholder="isManualInput ? '请输入您的想法...' : '选择上方选项或点击&quot;我要输入&quot;'"
             class="w-full px-4 py-3 border border-gray-300 rounded-2xl focus:ring-2 focus:ring-indigo-400 focus:border-indigo-400 outline-none transition-all disabled:bg-gray-100 resize-none overflow-y-auto leading-relaxed"
             :disabled="!isManualInput"
-            :aria-label="isManualInput ? '输入您的想法' : '请先点击快速选项或"我要输入"按钮'"
+            :aria-label="isManualInput ? '输入您的想法' : '请先点击快速选项或&quot;我要输入&quot;按钮'"
             rows="5"
             ref="textInputRef"
             @input="handleTextareaInput"
