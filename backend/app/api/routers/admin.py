@@ -506,12 +506,22 @@ async def test_gemini_rag(
             import google.generativeai as genai
             genai.configure(api_key=api_key.strip())
 
-            # 尝试列出 Corpus（测试权限）
-            corpora_list = list(genai.list_corpora())
-            corpus_count = len(corpora_list)
-
-            api_key_valid = True
-            test_message = f"✅ Gemini API Key 有效！已连接到 Google AI，找到 {corpus_count} 个 Corpus"
+            # 尝试列出 Corpus（测试权限）；兼容旧版 SDK 无 list_corpora 时退回 list_models
+            try:
+                if hasattr(genai, "list_corpora"):
+                    corpora_list = list(genai.list_corpora())
+                    corpus_count = len(corpora_list)
+                    test_message = f"✅ Gemini API Key 有效！已连接到 Google AI，找到 {corpus_count} 个 Corpus"
+                else:
+                    models = list(genai.list_models())
+                    test_message = f"✅ Gemini API Key 有效！已连接到 Google AI，模型数 {len(models)}（当前 SDK 不支持 list_corpora）"
+                api_key_valid = True
+            except Exception as inner_e:
+                logger.warning("Gemini API Key 认证时调用列表接口失败：%s", inner_e)
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Gemini API Key 检测失败: {inner_e}"
+                )
 
             # 4. 可选：测试指定项目的 Corpus 访问
             corpus_accessible = None
