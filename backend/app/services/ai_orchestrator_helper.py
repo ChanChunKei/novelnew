@@ -772,6 +772,9 @@ async def _tool_search_chapters(
     if not project_id:
         return "错误：缺少project_id"
 
+    # ✅ 修复1：提前初始化 rag_provider，避免异常时 UnboundLocalError
+    rag_provider = settings.rag_provider  # 从配置获取默认值
+
     # 方式1：Gemini Semantic Retrieval（优先，检查配置）
     # ✅ 修改：从数据库或环境变量读取配置
     try:
@@ -814,14 +817,17 @@ async def _tool_search_chapters(
         try:
             from ..services.vector_store_service import VectorStoreService
             from ..services.llm_service import LLMService
+            from ..db.session import AsyncSessionLocal
 
             vector_service = VectorStoreService()
-            # ✅ 修复：LLMService 构造函数接受 session 作为位置参数，不是 db= 关键字参数
-            llm_service = LLMService(db_session)
+            
+            # ✅ 修复2：使用独立的 session 发起 embedding HTTP 请求
+            # 避免在当前 db_session 上并发操作导致 "concurrent operations are not permitted"
+            async with AsyncSessionLocal() as embedding_session:
+                llm_service = LLMService(embedding_session)
+                keyword_embedding = await llm_service.get_embedding(keyword)
 
-            # ✅ 修复：需要先将查询文本转为向量
-            keyword_embedding = await llm_service.get_embedding(keyword)
-
+            # 现在向量查询可以安全进行（不涉及 HTTP）
             results = await vector_service.query_chunks(
                 project_id=project_id,
                 embedding=keyword_embedding,  # ✅ 传递向量而不是文本
