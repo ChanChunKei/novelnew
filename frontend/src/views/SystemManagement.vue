@@ -32,7 +32,7 @@
 
         <!-- AI 功能配置 -->
         <div v-else-if="activeTab === 'functions'" class="content-panel">
-          <AIFunctionConfig />
+          <RAGConfig />
         </div>
 
         <!-- AI 调用监控 -->
@@ -57,7 +57,7 @@
 <script setup lang="ts">
 import { ref, h } from 'vue'
 import AIProviderManagement from '@/components/system/AIProviderManagement.vue'
-import AIFunctionConfig from '@/components/system/AIFunctionConfig.vue'
+import RAGConfig from '@/components/system/RAGConfig.vue'
 import AIMonitoring from '@/components/system/AIMonitoring.vue'
 import AsyncTaskManagement from '@/components/system/AsyncTaskManagement.vue'
 import FanqieManagement from '@/components/system/FanqieManagement.vue'
