@@ -21,12 +21,12 @@ export interface GeminiRAGTestResult {
 export const ragConfigApi = {
     // 获取系统配置
     getSystemConfig: (key: string) => {
-        return request.get(`/api/admin/system-configs/${key}`)
+        return request.get(`/api/admin/system-configs/${encodeURIComponent(key)}`)
     },
 
     // 更新系统配置
     upsertSystemConfig: (key: string, value: string, description?: string) => {
-        return request.put(`/api/admin/system-configs/${key}`, {
+        return request.put(`/api/admin/system-configs/${encodeURIComponent(key)}`, {
             value,
             description
         })

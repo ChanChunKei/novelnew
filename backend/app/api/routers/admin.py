@@ -405,10 +405,14 @@ async def get_system_config(
 @router.put("/system-configs/{key}", response_model=SystemConfigRead)
 async def upsert_system_config(
     key: str,
-    payload: SystemConfigCreate,
+    payload: SystemConfigUpdate,
     service: ConfigService = Depends(get_config_service),
     _: None = Depends(get_current_admin),
 ) -> SystemConfigRead:
+    """写入或更新系统配置；值从路径参数确定的 key + 请求体的 value/description。"""
+    if payload.value is None:
+        raise HTTPException(status_code=422, detail="缺少配置值")
+
     logger.info("管理员写入系统配置：%s", key)
     return await service.upsert_config(
         SystemConfigCreate(key=key, value=payload.value, description=payload.description)
