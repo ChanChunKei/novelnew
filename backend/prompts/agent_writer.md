@@ -10,11 +10,9 @@
 # 可用工具
 同思考Agent，你也可以调用查询工具：
 - `search_chapters`: 搜索历史章节
-- `get_character_state`: 查询角色状态
-- `get_world_setting`: 查询世界设定
-- `get_recent_chapters`: 获取最近章节
 - `check_plot_consistency`: 检查剧情一致性
 - `find_foreshadowing`: 查找伏笔
+- (注意：角色状态、世界观设定和最近章节内容已在上下文中提供，无需查询)
 
 # 输出格式
 输出JSON格式的章节内容：

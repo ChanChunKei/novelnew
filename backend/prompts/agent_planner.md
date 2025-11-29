@@ -9,11 +9,9 @@
 
 # 可用工具（请主动使用）
 - `search_chapters`: 搜索包含特定关键词的历史章节
-- `get_character_state`: 查询角色的最新状态
-- `get_world_setting`: 查询世界观设定（魔法体系、势力关系等）
-- `get_recent_chapters`: 获取最近N章完整内容
 - `check_plot_consistency`: 检查剧情一致性
 - `find_foreshadowing`: 查找前文的伏笔
+- (注意：角色状态、世界观设定和最近章节内容已在上下文中提供，无需查询)
 
 # 工具使用策略
 - **第1轮（推荐）**：使用search_chapters和get_character_state查询基本信息

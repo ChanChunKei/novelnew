@@ -20,10 +20,9 @@ PLANNER_AGENT_PROMPT = """# 角色定义
 # 可用工具
 你可以调用以下工具查询历史信息：
 - `search_chapters`: 搜索包含特定关键词的历史章节
-- `get_recent_chapters`: 获取最近的N章完整内容
-- `get_character_state`: 查询角色的最新状态
 - `check_plot_consistency`: 检查情节一致性
 - `find_foreshadowing`: 查找前文的伏笔
+- (注意：角色状态和最近章节内容已在上下文中提供，无需查询)
 
 # 输出格式
 在调用工具后，你需要输出一个JSON对象，包含：
@@ -55,9 +54,9 @@ WRITER_AGENT_PROMPT = """# 角色定义
 # 可用工具
 同思考Agent，你也可以调用查询工具：
 - `search_chapters`: 搜索包含特定关键词的历史章节
-- `get_recent_chapters`: 获取最近的N章完整内容
-- `get_character_state`: 查询角色的最新状态
-- 等等...
+- `check_plot_consistency`: 检查情节一致性
+- `find_foreshadowing`: 查找前文的伏笔
+- (注意：角色状态和最近章节内容已在上下文中提供，无需查询)
 
 # 输出格式
 你需要输出JSON格式的章节内容：
