@@ -9,7 +9,7 @@ import json
 import os
 import time
 from datetime import datetime, timezone
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Callable, Awaitable
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -651,6 +651,7 @@ async def _execute_tools(
     project_id: Optional[str],
     chapter_number: Optional[int],
     tool_calls: List[Dict],
+    log_callback: Optional[Callable[[str, str], Awaitable[None]]] = None,
 ) -> List[str]:
     """
     执行工具调用
@@ -660,6 +661,7 @@ async def _execute_tools(
         project_id: 项目ID
         chapter_number: 当前章节号
         tool_calls: 工具调用列表
+        log_callback: 可选的日志回调函数，用于记录工具执行日志到数据库
 
     Returns:
         工具执行结果列表
@@ -692,22 +694,57 @@ async def _execute_tools(
 
         logger.info(f"执行工具: {function_name}，参数: {arguments}")
 
+        # ✅ 新增：记录工具调用到数据库
+        if log_callback:
+            # 提取关键参数用于日志
+            key_param = ""
+            if function_name == "search_chapters":
+                key_param = f"关键词: \"{arguments.get('keyword', 'N/A')}\""
+            elif function_name == "check_plot_consistency":
+                key_param = f"情节点: {arguments.get('plot_point', 'N/A')}"
+            elif function_name == "find_foreshadowing":
+                key_param = f"主题: \"{arguments.get('theme', 'N/A')}\""
+
+            await log_callback("info", f"🛠️ Agent正在使用工具: {function_name} ({key_param})")
+
         try:
             if function_name == "search_chapters":
-                return await _tool_search_chapters(db_session, project_id, arguments)
+                result = await _tool_search_chapters(db_session, project_id, arguments)
             elif function_name == "check_plot_consistency":
-                return await _tool_check_plot_consistency(db_session, project_id, arguments)
+                result = await _tool_check_plot_consistency(db_session, project_id, arguments)
             elif function_name == "find_foreshadowing":
-                return await _tool_find_foreshadowing(db_session, project_id, arguments)
+                result = await _tool_find_foreshadowing(db_session, project_id, arguments)
             # ✅ 已移除冗余工具：get_character_state, get_world_setting, get_recent_chapters
             # 这些信息已在上下文的 volumes_snapshot 和 previous_chapters_text 中提供
             elif function_name in ["get_character_state", "get_world_setting", "get_recent_chapters"]:
-                return f"⚠️ 工具 {function_name} 已废弃。请使用上下文中的 volumes_snapshot 或 previous_chapters_text 获取相关信息。"
+                result = f"⚠️ 工具 {function_name} 已废弃。请使用上下文中的 volumes_snapshot 或 previous_chapters_text 获取相关信息。"
             else:
-                return f"错误：未知工具 {function_name}"
+                result = f"错误：未知工具 {function_name}"
+
+            # ✅ 新增：记录工具执行结果到数据库
+            if log_callback:
+                # 提取结果摘要
+                result_summary = result[:100] + "..." if len(result) > 100 else result
+                if "错误" in result or "⚠️" in result:
+                    await log_callback("warning", f"⚠️ 工具 {function_name} 返回: {result_summary}")
+                else:
+                    # 统计返回结果中的章节数量或其他有用信息
+                    result_count = result.count("第") if "第" in result else 0
+                    if result_count > 0:
+                        await log_callback("info", f"✅ 工具 {function_name} 返回了 {result_count} 条相关结果")
+                    else:
+                        await log_callback("info", f"✅ 工具 {function_name} 执行完成")
+
+            return result
         except Exception as e:
             logger.error(f"工具执行失败: {function_name}, 错误: {str(e)}")
-            return f"错误：工具执行失败 - {str(e)}"
+            error_msg = f"错误：工具执行失败 - {str(e)}"
+
+            # ✅ 新增：记录错误到数据库
+            if log_callback:
+                await log_callback("error", f"❌ 工具 {function_name} 执行失败: {str(e)}")
+
+            return error_msg
 
     # 并行执行所有工具调用
     results = await asyncio.gather(*[execute_single_tool(tc) for tc in tool_calls])
@@ -2079,6 +2116,7 @@ async def generate_outline_with_agents(
     writer_model: Optional[str] = None,
     reviewer_provider: Optional[str] = None,
     reviewer_model: Optional[str] = None,
+    log_callback: Optional[Callable[[str, str], Awaitable[None]]] = None,
 ) -> Dict[str, Any]:
     """
     使用3Agent对话模式生成大纲（带总体超时控制）
@@ -2142,6 +2180,7 @@ async def generate_outline_with_agents(
                 writer_model=writer_model,
                 reviewer_provider=reviewer_provider,
                 reviewer_model=reviewer_model,
+                log_callback=log_callback,  # ✅ 传递 log_callback
             ),
             timeout=OUTLINE_DIALOGUE_TOTAL_TIMEOUT
         )
@@ -2173,11 +2212,15 @@ async def _generate_outline_with_agents_impl(
     writer_model: Optional[str] = None,
     reviewer_provider: Optional[str] = None,
     reviewer_model: Optional[str] = None,
+    log_callback: Optional[Callable[[str, str], Awaitable[None]]] = None,
 ) -> Dict[str, Any]:
     """
     三Agent对话模式生成大纲（实际实现）
 
     内部实现函数，由generate_outline_with_agents包装调用
+
+    Args:
+        log_callback: 可选的日志回调函数，用于记录工具执行日志到数据库
     """
     from ..config.outline_agent_prompts import get_outline_agent_prompt
     from ..config.ai_function_config import get_function_config
@@ -2226,6 +2269,10 @@ async def _generate_outline_with_agents_impl(
     logger.info("阶段1：规划Agent分析项目并规划章节结构")
     planner_start = time.time()
 
+    # ✅ 新增：记录阶段开始
+    if log_callback:
+        await log_callback("info", "📋 Planner开始分析项目并规划章节结构...")
+
     planner_result = await _call_outline_planner_agent(
         llm_service=llm_service,
         provider=planner_llm_provider,
@@ -2236,6 +2283,7 @@ async def _generate_outline_with_agents_impl(
         temperature=planner_temp,
         project_id=project_id,  # ✅ 传递 project_id 支持工具调用
         start_chapter=start_chapter,  # ✅ 传递 start_chapter 支持工具调用
+        log_callback=log_callback,  # ✅ 传递 log_callback
     )
 
     logger.info(f"规划Agent完成，耗时: {time.time() - planner_start:.2f}秒")
@@ -2273,6 +2321,13 @@ async def _generate_outline_with_agents_impl(
             is_rewrite=(iteration > 0)
         )
 
+        # ✅ 新增：记录阶段开始
+        if log_callback:
+            if iteration == 0:
+                await log_callback("info", "✍️ Writer开始撰写大纲...")
+            else:
+                await log_callback("info", f"✍️ Writer重写大纲（第{iteration + 1}轮）...")
+
         writer_result = await _call_outline_writer_agent(
             llm_service=llm_service,
             provider=writer_llm_provider,
@@ -2283,6 +2338,7 @@ async def _generate_outline_with_agents_impl(
             temperature=writer_temp,
             project_id=project_id,  # ✅ 传递 project_id 支持工具调用
             start_chapter=start_chapter,  # ✅ 传递 start_chapter 支持工具调用
+            log_callback=log_callback,  # ✅ 传递 log_callback
         )
 
         logger.info(f"写作Agent完成，耗时: {time.time() - writer_start:.2f}秒")
@@ -2444,14 +2500,18 @@ async def _call_outline_planner_agent(
     temperature: float,
     project_id: Optional[str] = None,
     start_chapter: Optional[int] = None,
+    log_callback: Optional[Callable[[str, str], Awaitable[None]]] = None,
 ) -> Dict[str, Any]:
     """
     调用大纲规划Agent（支持工具调用）
 
     上下文：项目蓝图 + 已完成章节摘要 + 分卷信息
     任务：分析项目，规划章节结构和节奏
-    
+
     ✅ 新增：支持RAG工具调用，可查询历史章节验证伏笔、角色状态等
+
+    Args:
+        log_callback: 可选的日志回调函数，用于记录工具执行日志到数据库
     """
     from ..config.agent_tools import NOVEL_AGENT_TOOLS
     
@@ -2509,13 +2569,18 @@ async def _call_outline_planner_agent(
         # 检查是否有工具调用
         if not is_final_round and "tool_calls" in response and response["tool_calls"]:
             logger.info(f"大纲规划Agent第{round_num + 1}轮调用了 {len(response['tool_calls'])} 个工具")
-            
+
+            # ✅ 新增：记录工具调用开始
+            if log_callback:
+                await log_callback("info", f"🤔 Planner正在分析，调用了 {len(response['tool_calls'])} 个工具...")
+
             # 执行工具
             tool_results = await _execute_tools(
                 db_session=llm_service.db_session,
                 tool_calls=response["tool_calls"],
                 project_id=project_id,
                 chapter_number=start_chapter,
+                log_callback=log_callback,  # ✅ 传递 log_callback
             )
 
             # 添加到对话
@@ -2554,13 +2619,17 @@ async def _call_outline_writer_agent(
     temperature: float,
     project_id: Optional[str] = None,
     start_chapter: Optional[int] = None,
+    log_callback: Optional[Callable[[str, str], Awaitable[None]]] = None,
 ) -> Dict[str, Any]:
     """
     调用大纲撰写Agent（支持工具调用）
 
     任务：根据规划方案撰写详细的章节大纲（标题+摘要）
-    
+
     ✅ 新增：支持RAG工具调用，可查询历史章节验证细节、角色状态等
+
+    Args:
+        log_callback: 可选的日志回调函数，用于记录工具执行日志到数据库
     """
     from ..config.agent_tools import NOVEL_AGENT_TOOLS
     
@@ -2621,13 +2690,18 @@ async def _call_outline_writer_agent(
         # 有工具调用
         if "tool_calls" in response and response["tool_calls"]:
             logger.info(f"大纲写作Agent第{round_num + 1}轮调用了 {len(response['tool_calls'])} 个工具")
-            
+
+            # ✅ 新增：记录工具调用开始
+            if log_callback:
+                await log_callback("info", f"✍️ Writer正在撰写大纲，调用了 {len(response['tool_calls'])} 个工具...")
+
             # 执行工具
             tool_results = await _execute_tools(
                 db_session=llm_service.db_session,
                 tool_calls=response["tool_calls"],
                 project_id=project_id,
                 chapter_number=start_chapter,
+                log_callback=log_callback,  # ✅ 传递 log_callback
             )
 
             # 添加到对话

@@ -88,6 +88,23 @@ async def lifespan(app: FastAPI):
     from .services.auth_service import start_cleanup_task
     start_cleanup_task()
 
+    # ✅ 新增：初始化定时生成器调度器
+    from .services.scheduled_generator_service import ScheduledGeneratorService
+    scheduler = ScheduledGeneratorService.get_scheduler()
+    logging.getLogger(__name__).info("✅ 定时生成器调度器已启动")
+
+    # TODO: 恢复已启用的定时任务（从数据库中加载）
+    async with AsyncSessionLocal() as session:
+        from .models.scheduled_generator import ScheduledGeneratorConfig
+        from sqlalchemy import select
+        result = await session.execute(
+            select(ScheduledGeneratorConfig).where(ScheduledGeneratorConfig.enabled == True)
+        )
+        enabled_configs = list(result.scalars().all())
+        for config in enabled_configs:
+            await ScheduledGeneratorService._register_scheduled_job(session, config)
+            logging.getLogger(__name__).info(f"✅ 恢复定时任务: {config.name} (ID: {config.id})")
+
     yield
 
 

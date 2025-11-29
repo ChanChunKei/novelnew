@@ -25,4 +25,6 @@ pytest==7.4.3
 pytest-asyncio==0.21.1
 pytest-mock==3.12.0
 playwright==1.40.0
+apscheduler==3.10.4
+pytz==2024.1
 

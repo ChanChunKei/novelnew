@@ -265,8 +265,13 @@ async def converse_with_concept(
 
     logger.info("项目 %s 概念对话完成，is_complete=%s", project_id, parsed.get("is_complete"))
 
+    # ✅ 改进：始终明确设置 ready_for_blueprint 字段
+    # 当对话完成时设为True，否则设为False，避免出现None值导致前端判断不清晰
     if parsed.get("is_complete"):
         parsed["ready_for_blueprint"] = True
+        logger.info("项目 %s 对话已完成，可以生成蓝图", project_id)
+    else:
+        parsed["ready_for_blueprint"] = False
 
     parsed.setdefault("conversation_state", parsed.get("conversation_state", {}))
     return ConverseResponse(**parsed)
@@ -291,11 +296,19 @@ async def generate_blueprint(
         logger.warning("项目 %s 缺少对话历史，无法生成蓝图", project_id)
         raise HTTPException(status_code=400, detail="缺少对话历史，请先完成概念对话后再生成蓝图")
 
+    # ✅ 改进：添加详细的解析日志
+    logger.info(f"项目 {project_id} 开始解析对话历史，共 {len(history_records)} 条记录")
+
     formatted_history: List[Dict[str, str]] = []
-    for record in history_records:
+    skipped_records = 0
+    parse_errors = 0
+
+    for idx, record in enumerate(history_records):
         role = record.role
         content = record.content
         if not role or not content:
+            skipped_records += 1
+            logger.debug(f"跳过空记录 #{idx + 1} (role={role}, content={'空' if not content else '存在'})")
             continue
         try:
             normalized = unwrap_markdown_json(content)
@@ -304,18 +317,77 @@ async def generate_blueprint(
                 user_value = data.get("value", data)
                 if isinstance(user_value, str):
                     formatted_history.append({"role": "user", "content": user_value})
+                    logger.debug(f"成功解析用户消息 #{idx + 1}: {user_value[:50]}...")
+                else:
+                    logger.warning(f"用户消息 #{idx + 1} 的value字段类型错误: {type(user_value)}")
             elif role == "assistant":
                 ai_message = data.get("ai_message") if isinstance(data, dict) else None
                 if ai_message:
                     formatted_history.append({"role": "assistant", "content": ai_message})
-        except (json.JSONDecodeError, AttributeError):
+                    logger.debug(f"成功解析AI消息 #{idx + 1}: {ai_message[:50]}...")
+                else:
+                    logger.warning(f"AI消息 #{idx + 1} 缺少ai_message字段或格式错误")
+        except (json.JSONDecodeError, AttributeError) as e:
+            parse_errors += 1
+            logger.warning(
+                f"跳过无法解析的对话记录 #{idx + 1} (role={role}): {type(e).__name__}: {str(e)}, "
+                f"content前100字符: {content[:100]}"
+            )
             continue
 
+    # ✅ 改进：记录解析统计信息
+    logger.info(
+        f"项目 {project_id} 对话历史解析完成: "
+        f"总计 {len(history_records)} 条，成功解析 {len(formatted_history)} 条，"
+        f"跳过空记录 {skipped_records} 条，解析失败 {parse_errors} 条"
+    )
+
     if not formatted_history:
-        logger.warning("项目 %s 对话历史格式异常，无法提取有效内容", project_id)
+        logger.error(
+            f"项目 {project_id} 对话历史格式异常，无法提取有效内容。"
+            f"原始记录数: {len(history_records)}, 跳过: {skipped_records}, 解析失败: {parse_errors}"
+        )
         raise HTTPException(
             status_code=400,
-            detail="无法从历史对话中提取有效内容，请检查对话历史格式或重新进行概念对话"
+            detail=f"无法从历史对话中提取有效内容（共{len(history_records)}条记录，全部解析失败）。"
+                   f"请检查对话历史格式或重新进行概念对话。"
+        )
+
+    # ✅ 改进：添加对话质量验证，确保有足够的信息生成蓝图
+    user_messages = [msg for msg in formatted_history if msg.get("role") == "user"]
+    assistant_messages = [msg for msg in formatted_history if msg.get("role") == "assistant"]
+    total_content_length = sum(len(msg.get("content", "")) for msg in formatted_history)
+
+    logger.info(
+        f"项目 {project_id} 对话统计: 用户消息 {len(user_messages)} 条, "
+        f"AI消息 {len(assistant_messages)} 条, 总字数 {total_content_length}"
+    )
+
+    # 验证对话质量
+    if len(user_messages) < 1:
+        logger.warning(f"项目 {project_id} 缺少用户消息")
+        raise HTTPException(
+            status_code=400,
+            detail="对话中缺少用户输入内容，无法生成蓝图。\n请先进行概念对话，描述您的故事创意。"
+        )
+
+    if len(assistant_messages) < 1:
+        logger.warning(f"项目 {project_id} 缺少AI响应消息")
+        raise HTTPException(
+            status_code=400,
+            detail="对话中缺少AI响应内容，系统状态异常。\n请尝试重新开始对话。"
+        )
+
+    if total_content_length < 100:
+        logger.warning(f"项目 {project_id} 对话内容过短（{total_content_length}字符）")
+        raise HTTPException(
+            status_code=400,
+            detail=f"对话内容过于简短（仅{total_content_length}字符），无法生成完整蓝图。\n\n"
+                   "建议：\n"
+                   "• 提供更详细的故事背景和世界观\n"
+                   "• 描述主要角色及其关系\n"
+                   "• 说明核心情节和冲突\n"
+                   "• 继续与AI对话，完善您的创意"
         )
 
     system_prompt = _ensure_prompt(await prompt_service.get_prompt("screenwriting"), "screenwriting")
@@ -337,7 +409,11 @@ async def generate_blueprint(
         logger.error("项目 %s 蓝图生成失败: AI 返回空响应", project_id)
         raise HTTPException(
             status_code=500,
-            detail="蓝图生成失败，AI 未返回任何内容。请检查 AI 配置或重试。"
+            detail="AI 暂时无法生成蓝图内容。这可能是因为：\n"
+                   "1. AI 服务暂时繁忙\n"
+                   "2. 网络连接不稳定\n"
+                   "3. 对话内容不够完整\n\n"
+                   "建议：请稍后重试，或尝试补充更多故事设定信息。"
         )
 
     blueprint_raw = remove_think_tags(blueprint_raw)
@@ -355,7 +431,11 @@ async def generate_blueprint(
         )
         raise HTTPException(
             status_code=500,
-            detail="蓝图生成失败，AI 返回的内容无法解析。请重试或联系管理员。"
+            detail="AI 生成的蓝图内容格式异常，无法正确解析。\n\n"
+                   "这通常是暂时性问题，建议：\n"
+                   "1. 点击重试按钮再次尝试\n"
+                   "2. 如果持续失败，请尝试重新开始对话\n"
+                   "3. 确保对话中包含了故事的核心设定信息"
         )
 
     try:
@@ -371,7 +451,14 @@ async def generate_blueprint(
         )
         raise HTTPException(
             status_code=500,
-            detail=f"蓝图生成失败，AI 返回的内容格式不正确。请重试或联系管理员。错误详情: {str(exc)}"
+            detail="AI 生成的蓝图数据结构有误，系统无法识别。\n\n"
+                   "这可能是因为：\n"
+                   "• AI 输出格式不符合预期\n"
+                   "• 内容包含了特殊字符\n\n"
+                   "建议操作：\n"
+                   "1. 立即重试（成功率较高）\n"
+                   "2. 如果多次失败，请尝试简化故事设定\n"
+                   "3. 或者重新开始对话，用更清晰的描述"
         ) from exc
 
     # 不再限制章节大纲数量，让 AI 自主决定
@@ -415,12 +502,19 @@ async def regenerate_blueprint(
         logger.warning("项目 %s 缺少对话历史，无法重新生成蓝图", project_id)
         raise HTTPException(status_code=400, detail="缺少对话历史，请先完成概念对话后再生成蓝图")
 
+    # ✅ 改进：添加详细的解析日志
+    logger.info(f"项目 {project_id} 开始解析对话历史（重新生成），共 {len(history_records)} 条记录")
+
     # 格式化对话历史
     formatted_history: List[Dict[str, str]] = []
-    for record in history_records:
+    skipped_records = 0
+    parse_errors = 0
+
+    for idx, record in enumerate(history_records):
         role = record.role
         content = record.content
         if not role or not content:
+            skipped_records += 1
             continue
         try:
             normalized = unwrap_markdown_json(content)
@@ -433,14 +527,58 @@ async def regenerate_blueprint(
                 ai_message = data.get("ai_message") if isinstance(data, dict) else None
                 if ai_message:
                     formatted_history.append({"role": "assistant", "content": ai_message})
-        except (json.JSONDecodeError, AttributeError):
+        except (json.JSONDecodeError, AttributeError) as e:
+            parse_errors += 1
+            logger.warning(
+                f"跳过无法解析的对话记录 #{idx + 1} (role={role}): {type(e).__name__}: {str(e)}"
+            )
             continue
 
+    # ✅ 改进：记录解析统计信息
+    logger.info(
+        f"项目 {project_id} 对话历史解析完成（重新生成）: "
+        f"总计 {len(history_records)} 条，成功解析 {len(formatted_history)} 条，"
+        f"跳过 {skipped_records} 条，解析失败 {parse_errors} 条"
+    )
+
     if not formatted_history:
-        logger.warning("项目 %s 对话历史格式异常，无法提取有效内容", project_id)
+        logger.error(
+            f"项目 {project_id} 对话历史格式异常，无法提取有效内容（重新生成）。"
+            f"原始记录数: {len(history_records)}, 跳过: {skipped_records}, 解析失败: {parse_errors}"
+        )
         raise HTTPException(
             status_code=400,
-            detail="无法从历史对话中提取有效内容，请检查对话历史格式或重新进行概念对话"
+            detail=f"无法从历史对话中提取有效内容（共{len(history_records)}条记录，全部解析失败）。"
+                   f"请检查对话历史格式或重新进行概念对话。"
+        )
+
+    # ✅ 改进：验证补充信息的有效性
+    if not request.additional_feedback or len(request.additional_feedback.strip()) < 10:
+        logger.warning(f"项目 {project_id} 补充信息过短或为空")
+        raise HTTPException(
+            status_code=400,
+            detail="补充信息内容过少，无法指导AI重新生成蓝图。\n\n"
+                   "请提供更具体的修改建议，例如：\n"
+                   "• 调整角色性格或背景\n"
+                   "• 修改情节走向\n"
+                   "• 增补世界观设定\n"
+                   "• 调整故事风格或基调"
+        )
+
+    # ✅ 改进：添加对话质量验证（重新生成前）
+    user_messages = [msg for msg in formatted_history if msg.get("role") == "user"]
+    assistant_messages = [msg for msg in formatted_history if msg.get("role") == "assistant"]
+
+    logger.info(
+        f"项目 {project_id} 原对话统计（重新生成前）: 用户消息 {len(user_messages)} 条, "
+        f"AI消息 {len(assistant_messages)} 条"
+    )
+
+    if len(user_messages) < 1 or len(assistant_messages) < 1:
+        logger.warning(f"项目 {project_id} 原对话内容不完整")
+        raise HTTPException(
+            status_code=400,
+            detail="原对话内容不完整，无法重新生成蓝图。\n请返回对话界面，确保完成完整的概念对话。"
         )
 
     # ✅ 添加用户的补充信息作为新的用户消息
@@ -468,7 +606,11 @@ async def regenerate_blueprint(
         logger.error("项目 %s 蓝图重新生成失败: AI 返回空响应", project_id)
         raise HTTPException(
             status_code=500,
-            detail="蓝图重新生成失败，AI 未返回任何内容。请检查 AI 配置或重试。"
+            detail="AI 暂时无法重新生成蓝图内容。这可能是因为：\n"
+                   "1. AI 服务暂时繁忙\n"
+                   "2. 网络连接不稳定\n"
+                   "3. 补充的信息不够明确\n\n"
+                   "建议：请稍后重试，或尝试用更具体的语言描述您的修改需求。"
         )
 
     blueprint_raw = remove_think_tags(blueprint_raw)
@@ -485,7 +627,11 @@ async def regenerate_blueprint(
         )
         raise HTTPException(
             status_code=500,
-            detail="蓝图重新生成失败，AI 返回的内容无法解析。请重试或联系管理员。"
+            detail="AI 重新生成的蓝图内容格式异常，无法正确解析。\n\n"
+                   "这通常是暂时性问题，建议：\n"
+                   "1. 点击重试按钮再次尝试\n"
+                   "2. 如果持续失败，请尝试调整补充信息的表述\n"
+                   "3. 或者返回原蓝图，重新思考修改方向"
         )
 
     try:
@@ -501,7 +647,14 @@ async def regenerate_blueprint(
         )
         raise HTTPException(
             status_code=500,
-            detail=f"蓝图重新生成失败，AI 返回的内容格式不正确。请重试或联系管理员。错误详情: {str(exc)}"
+            detail="AI 重新生成的蓝图数据结构有误，系统无法识别。\n\n"
+                   "这可能是因为：\n"
+                   "• AI 在整合补充信息时出现格式问题\n"
+                   "• 补充内容包含了特殊字符\n\n"
+                   "建议操作：\n"
+                   "1. 立即重试（成功率较高）\n"
+                   "2. 简化补充信息的描述\n"
+                   "3. 或者返回原蓝图，分多次小幅调整"
         ) from exc
 
     chapter_outline = blueprint_data.get("chapter_outline", [])
