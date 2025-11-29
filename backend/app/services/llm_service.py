@@ -596,9 +596,12 @@ class LLMService:
                     except Exception:
                         pass  # 忽略关闭时的错误
         else:
-            config = await self._resolve_llm_config(user_id)
-            api_key = await self._get_config_value("embedding.api_key") or config["api_key"]
-            base_url = await self._get_config_value("embedding.base_url") or config.get("base_url")
+            # _resolve_llm_config 返回端点列表，这里取第一个作为默认嵌入端点
+            endpoints = await self._resolve_llm_config(user_id)
+            default_endpoint = endpoints[0] if endpoints else {}
+
+            api_key = await self._get_config_value("embedding.api_key") or default_endpoint.get("api_key")
+            base_url = await self._get_config_value("embedding.base_url") or default_endpoint.get("base_url")
             client = AsyncOpenAI(api_key=api_key, base_url=base_url)
             try:
                 response = await client.embeddings.create(
