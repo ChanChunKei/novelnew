@@ -17,6 +17,7 @@ from ..config.ai_function_config import AIFunctionType
 from ..services.ai_orchestrator import AIOrchestrator
 from ..services.llm_service import LLMService
 from ..utils.json_utils import remove_think_tags, unwrap_markdown_json, sanitize_json_like_text
+from ..core.config import settings
 import re
 
 logger = logging.getLogger(__name__)
