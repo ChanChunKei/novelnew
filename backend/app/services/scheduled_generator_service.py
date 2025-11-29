@@ -29,7 +29,6 @@ from ..models.scheduled_generator import (
 )
 from ..models.auto_generator import AutoGeneratorTask
 from .auto_generator_service import AutoGeneratorService
-from .novel_service import novelApi
 
 logger = logging.getLogger(__name__)
 
@@ -570,18 +569,25 @@ class ScheduledGeneratorService:
         try:
             logger.info(f"Uploading novel {queue_item.novel_id} to Fanqie")
 
-            # 调用现有的番茄上传功能
-            result = await novelApi.uploadToFanqie(
-                projectId=queue_item.novel_id,
-                headless=True,
-                uploadInterval=config.upload_interval_seconds
-            )
+            # 调用现有的番茄上传服务
+            from .fanqie_publisher_service import FanqiePublisherService
 
-            queue_item.uploaded_to_fanqie = True
+            async with FanqiePublisherService(headless=True) as publisher:
+                result = await publisher.upload_novel_to_fanqie(
+                    db=session,
+                    project_id=queue_item.novel_id,
+                    account="default",
+                    upload_interval=config.upload_interval_seconds
+                )
+
+            queue_item.uploaded_to_fanqie = result.get("success", False)
             queue_item.upload_result = json.dumps(result, ensure_ascii=False)
             await session.commit()
 
-            logger.info(f"Successfully uploaded novel {queue_item.novel_id} to Fanqie")
+            if result.get("success"):
+                logger.info(f"Successfully uploaded novel {queue_item.novel_id} to Fanqie")
+            else:
+                logger.warning(f"Failed to upload novel {queue_item.novel_id}: {result.get('error')}")
 
         except Exception as e:
             logger.exception(f"Error uploading to Fanqie: {e}")
