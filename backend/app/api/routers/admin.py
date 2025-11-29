@@ -484,6 +484,27 @@ async def test_gemini_rag(
         # 1. 检查 rag.provider 配置
         rag_provider_record = await repo.get_by_key("rag.provider")
         rag_provider = rag_provider_record.value if rag_provider_record else os.getenv("RAG_PROVIDER", "libsql")
+        normalized_provider = rag_provider.strip().lower()
+
+        # SiliconFlow / libsql 无需调用 Gemini，直接提示
+        if normalized_provider == "siliconflow":
+            return GeminiRAGTestResult(
+                success=True,
+                message="SiliconFlow RAG 使用本地向量库 + SiliconFlow 嵌入，无需 Gemini 测试。请确保 SILICONFLOW_API_KEY / EMBEDDING_BASE_URL 已配置。",
+                api_key_configured=False,
+                api_key_valid=False,
+                provider=normalized_provider,
+                corpus_accessible=None
+            )
+        if normalized_provider != "gemini":
+            return GeminiRAGTestResult(
+                success=False,
+                message="当前 RAG Provider 不是 gemini，请先在系统配置中设置 rag.provider=gemini",
+                api_key_configured=False,
+                api_key_valid=False,
+                provider=normalized_provider,
+                corpus_accessible=None
+            )
 
         # 2. 检查 API Key 是否配置
         api_key_record = await repo.get_by_key("gemini.api_key")
@@ -497,7 +518,7 @@ async def test_gemini_rag(
                 message="未配置 Gemini API Key",
                 api_key_configured=False,
                 api_key_valid=False,
-                provider=rag_provider.strip().lower(),
+                provider=normalized_provider,
                 error_detail="请在系统配置中设置 gemini.api_key"
             )
 

@@ -12,7 +12,7 @@
         <!-- RAG Provider Selection -->
         <div>
           <label class="block text-sm font-medium text-slate-700 mb-2">检索提供方 (RAG Provider)</label>
-          <div class="grid grid-cols-2 gap-4">
+          <div class="grid grid-cols-3 gap-4">
             <div
               @click="form.provider = 'libsql'"
               :class="[
@@ -54,6 +54,28 @@
               <div>
                 <div class="font-medium text-slate-900">Google Gemini</div>
                 <div class="text-xs text-slate-500">使用 Google 语义检索，需配置 API Key</div>
+              </div>
+            </div>
+
+            <div
+              @click="form.provider = 'siliconflow'"
+              :class="[
+                'cursor-pointer rounded-lg border p-4 flex items-center gap-3 transition-all',
+                form.provider === 'siliconflow'
+                  ? 'border-indigo-500 bg-indigo-50 ring-1 ring-indigo-500'
+                  : 'border-slate-200 hover:border-slate-300'
+              ]"
+            >
+              <div class="flex-shrink-0">
+                <div class="w-5 h-5 rounded-full border flex items-center justify-center"
+                  :class="form.provider === 'siliconflow' ? 'border-indigo-600' : 'border-slate-400'"
+                >
+                  <div v-if="form.provider === 'siliconflow'" class="w-2.5 h-2.5 rounded-full bg-indigo-600"></div>
+                </div>
+              </div>
+              <div>
+                <div class="font-medium text-slate-900">SiliconFlow（向量库）</div>
+                <div class="text-xs text-slate-500">使用本地向量库 + SiliconFlow 嵌入，需在后端配置 SILICONFLOW_API_KEY / EMBEDDING_BASE_URL</div>
               </div>
             </div>
           </div>
