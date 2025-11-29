@@ -32,6 +32,11 @@
 
         <!-- AI 功能配置 -->
         <div v-else-if="activeTab === 'functions'" class="content-panel">
+          <AIFunctionConfig />
+        </div>
+
+        <!-- RAG 配置 -->
+        <div v-else-if="activeTab === 'rag'" class="content-panel">
           <RAGConfig />
         </div>
 
@@ -57,6 +62,7 @@
 <script setup lang="ts">
 import { ref, h } from 'vue'
 import AIProviderManagement from '@/components/system/AIProviderManagement.vue'
+import AIFunctionConfig from '@/components/system/AIFunctionConfig.vue'
 import RAGConfig from '@/components/system/RAGConfig.vue'
 import AIMonitoring from '@/components/system/AIMonitoring.vue'
 import AsyncTaskManagement from '@/components/system/AsyncTaskManagement.vue'
@@ -78,6 +84,15 @@ const tabs = [
     icon: () => h('svg', { viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2 }, [
       h('circle', { cx: 12, cy: 12, r: 3 }),
       h('path', { d: 'M12 1v6m0 6v6M5.64 5.64l4.24 4.24m4.24 4.24l4.24 4.24M1 12h6m6 0h6M5.64 18.36l4.24-4.24m4.24-4.24l4.24-4.24' })
+    ])
+  },
+  {
+    key: 'rag',
+    label: 'RAG 配置',
+    icon: () => h('svg', { viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2 }, [
+      h('path', { d: 'M3 7l9-4 9 4-9 4-9-4z' }),
+      h('path', { d: 'M3 17l9-4 9 4' }),
+      h('path', { d: 'M3 12l9 4 9-4' })
     ])
   },
   {
@@ -181,4 +196,3 @@ const tabs = [
   min-height: 600px;
 }
 </style>
-
