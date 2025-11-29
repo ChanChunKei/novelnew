@@ -15,7 +15,7 @@ from sqlalchemy import Integer, String, Boolean, DateTime, Text, ForeignKey, Enu
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 import enum
 
-from ..db.session import Base
+from ..db.base import Base
 
 
 class ScheduledGeneratorStatus(str, enum.Enum):
