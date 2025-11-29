@@ -53,9 +53,8 @@ async def _invoke_with_specific_route(
 
     route = routes[route_index]
 
-    # 使用LLMClient直接调用
-    from ...services.llm_client import LLMClient
-    from ...models.chat import ChatMessage
+    # 使用 LLMClient 直接调用（复用 utils.llm_tool 封装）
+    from ...utils.llm_tool import LLMClient, ChatMessage
 
     client = LLMClient(api_key=route["apiKey"], base_url=route["url"])
     chat_messages = [ChatMessage(role=msg["role"], content=msg["content"]) for msg in messages]
