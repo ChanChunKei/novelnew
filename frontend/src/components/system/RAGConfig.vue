@@ -112,6 +112,73 @@
           </p>
         </div>
 
+        <!-- SiliconFlow / LibSQL Embedding 配置 -->
+        <div v-if="form.provider === 'siliconflow' || form.provider === 'libsql'" class="space-y-4">
+          <div class="flex items-center gap-2 text-sm text-slate-600">
+            <span class="font-medium text-slate-800">嵌入 / 向量 API</span>
+            <span class="text-slate-400">（用于向量检索）</span>
+          </div>
+          <div class="grid gap-4">
+            <div>
+              <label class="block text-sm font-medium text-slate-700 mb-1">Embedding Base URL</label>
+              <input
+                v-model="form.embeddingBaseUrl"
+                type="text"
+                class="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
+                placeholder="https://api.siliconflow.cn/v1"
+              />
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-slate-700 mb-1">Embedding API Key</label>
+              <div class="relative">
+                <input
+                  v-model="form.embeddingApiKey"
+                  :type="showEmbKey ? 'text' : 'password'"
+                  class="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
+                  placeholder="sk-..."
+                />
+                <button
+                  @click="showEmbKey = !showEmbKey"
+                  class="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                >
+                  <svg v-if="showEmbKey" xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
+                  </svg>
+                  <svg v-else xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-slate-700 mb-1">Embedding 模型</label>
+              <input
+                v-model="form.embeddingModel"
+                type="text"
+                class="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
+                placeholder="Qwen/Qwen3-Embedding-8B"
+              />
+            </div>
+          </div>
+        </div>
+
+        <!-- Planner 工具调用上限 -->
+        <div>
+          <label class="block text-sm font-medium text-slate-700 mb-2">
+            Planner 工具调用上限
+            <span class="text-slate-400 text-xs">(1-10)</span>
+          </label>
+          <input
+            v-model.number="form.plannerToolMax"
+            type="number"
+            min="1"
+            max="10"
+            class="w-32 px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
+          />
+          <p class="mt-1 text-xs text-slate-500">控制思考 Agent 最多可以调用工具的轮次，默认 3。</p>
+        </div>
+
         <!-- Actions -->
         <div class="flex items-center gap-4 pt-4 border-t border-slate-100">
           <button
@@ -174,20 +241,36 @@ const loading = ref(false)
 const saving = ref(false)
 const testing = ref(false)
 const showKey = ref(false)
+const showEmbKey = ref(false)
 const testResult = ref<GeminiRAGTestResult | null>(null)
 
 const form = ref({
   provider: 'libsql',
-  apiKey: ''
+  apiKey: '',
+  embeddingBaseUrl: '',
+  embeddingApiKey: '',
+  embeddingModel: '',
+  plannerToolMax: 3
 })
 
 // 加载配置
 const loadConfig = async () => {
   loading.value = true
   try {
-    const [providerRes, apiKeyRes] = await Promise.all([
+    const [
+      providerRes,
+      apiKeyRes,
+      embKeyRes,
+      embBaseRes,
+      embModelRes,
+      plannerRes
+    ] = await Promise.all([
       ragConfigApi.getSystemConfig('rag.provider').catch(() => null),
-      ragConfigApi.getSystemConfig('gemini.api_key').catch(() => null)
+      ragConfigApi.getSystemConfig('gemini.api_key').catch(() => null),
+      ragConfigApi.getSystemConfig('embedding.api_key').catch(() => null),
+      ragConfigApi.getSystemConfig('embedding.base_url').catch(() => null),
+      ragConfigApi.getSystemConfig('embedding.model').catch(() => null),
+      ragConfigApi.getSystemConfig('planner.max_tool_rounds').catch(() => null)
     ])
 
     if (providerRes?.data) {
@@ -195,6 +278,21 @@ const loadConfig = async () => {
     }
     if (apiKeyRes?.data) {
       form.value.apiKey = apiKeyRes.data.value
+    }
+    if (embKeyRes?.data) {
+      form.value.embeddingApiKey = embKeyRes.data.value
+    }
+    if (embBaseRes?.data) {
+      form.value.embeddingBaseUrl = embBaseRes.data.value
+    }
+    if (embModelRes?.data) {
+      form.value.embeddingModel = embModelRes.data.value
+    }
+    if (plannerRes?.data) {
+      const parsed = Number(plannerRes.data.value)
+      if (!Number.isNaN(parsed)) {
+        form.value.plannerToolMax = parsed
+      }
     }
   } catch (error) {
     console.error('Failed to load RAG config:', error)
@@ -210,7 +308,11 @@ const saveConfig = async () => {
   try {
     await Promise.all([
       ragConfigApi.upsertSystemConfig('rag.provider', form.value.provider, 'RAG 检索提供方'),
-      ragConfigApi.upsertSystemConfig('gemini.api_key', form.value.apiKey, 'Google Gemini API Key')
+      ragConfigApi.upsertSystemConfig('gemini.api_key', form.value.apiKey, 'Google Gemini API Key'),
+      ragConfigApi.upsertSystemConfig('embedding.api_key', form.value.embeddingApiKey, 'Embedding API Key'),
+      ragConfigApi.upsertSystemConfig('embedding.base_url', form.value.embeddingBaseUrl, 'Embedding Base URL'),
+      ragConfigApi.upsertSystemConfig('embedding.model', form.value.embeddingModel, 'Embedding Model'),
+      ragConfigApi.upsertSystemConfig('planner.max_tool_rounds', String(form.value.plannerToolMax), 'Planner工具调用上限')
     ])
     
     globalAlert.showSuccess('RAG 配置已更新', '保存成功')

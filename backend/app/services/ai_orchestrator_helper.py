@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..config.ai_function_config import AIFunctionType
 from ..services.ai_orchestrator import AIOrchestrator
 from ..services.llm_service import LLMService
+from ..services.config_service import ConfigService
 from ..utils.json_utils import remove_think_tags, unwrap_markdown_json, sanitize_json_like_text
 from ..core.config import settings
 import re
@@ -1586,6 +1587,29 @@ async def _generate_with_agent_dialogue_impl(
 
 # ==================== Agent调用辅助函数 ====================
 
+
+async def _get_planner_tool_rounds(db_session: AsyncSession) -> int:
+    """支持从系统配置覆盖思考Agent的工具调用上限。"""
+    max_rounds = MAX_PLANNER_TOOL_ROUNDS
+    try:
+        cfg_service = ConfigService(db_session)
+        cfg = await cfg_service.get_config("planner.max_tool_rounds")
+        if cfg and cfg.value:
+            try:
+                parsed = int(cfg.value)
+                # 合理范围 1~10，防止误填
+                if parsed < 1:
+                    parsed = 1
+                elif parsed > 10:
+                    parsed = 10
+                max_rounds = parsed
+            except ValueError:
+                logger.warning(f"planner.max_tool_rounds 配置值无效: {cfg.value}, 使用默认 {max_rounds}")
+    except Exception as e:
+        logger.warning(f"读取 planner.max_tool_rounds 失败，使用默认 {max_rounds}: {e}")
+    return max_rounds
+
+
 async def _call_planner_agent(
     llm_service: LLMService,
     provider: str,
@@ -1613,8 +1637,10 @@ async def _call_planner_agent(
         {"role": "user", "content": user_prompt}
     ]
 
-    # Agent可以调用工具查询，最多3轮
-    for round_num in range(MAX_PLANNER_TOOL_ROUNDS):
+    max_rounds = await _get_planner_tool_rounds(llm_service.db_session)
+
+    # Agent可以调用工具查询，轮数可配置（默认3轮）
+    for round_num in range(max_rounds):
         response_str = await llm_service.invoke(
             provider=provider,
             model=model,
