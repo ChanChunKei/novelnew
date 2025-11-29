@@ -27,11 +27,13 @@ from ...schemas.novel import (
 )
 from ...schemas.user import UserInDB
 from ...services.ai_denoising_service import AIDenoisingService
+from ...services.chapter_ingest_service import ChapterIngestionService
 from ...services.llm_service import LLMService
 from ...services.novel_service import NovelService
 from ...services.prompt_service import PromptService
 from ...utils.json_utils import remove_think_tags, unwrap_markdown_json
 from ...repositories.system_config_repository import SystemConfigRepository
+from ...core.config import settings
 
 router = APIRouter(prefix="/api/writer", tags=["Writer"])
 logger = logging.getLogger(__name__)
@@ -625,6 +627,21 @@ async def select_chapter_version(
         )
         chapter.real_summary = remove_think_tags(summary)
         await session.commit()
+
+        # ✅ 将选定版本写入向量库（libsql/siliconflow 模式）
+        if settings.vector_store_enabled and settings.rag_provider in {"libsql", "siliconflow"}:
+            try:
+                ingestion_service = ChapterIngestionService(llm_service=llm_service)
+                await ingestion_service.ingest_chapter(
+                    project_id=project_id,
+                    chapter_number=chapter.chapter_number,
+                    title=chapter.title or selected.metadata.get("title") if selected.metadata else chapter.title,
+                    content=selected.content,
+                    summary=chapter.real_summary,
+                    user_id=current_user.id,
+                )
+            except Exception as e:  # pragma: no cover - 入库失败不阻断主流程
+                logger.warning("章节向量入库失败: project=%s chapter=%s error=%s", project_id, chapter.chapter_number, e)
 
     return await _load_project_schema(novel_service, project_id, current_user.id)
 
