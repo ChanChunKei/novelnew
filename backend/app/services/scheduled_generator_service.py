@@ -149,7 +149,7 @@ class ScheduledGeneratorService:
             .order_by(ScheduledGeneratorQueue.position.desc())
         )
         max_position = 0
-        first_item = result.scalar_one_or_none()
+        first_item = result.scalars().first()
         if first_item:
             max_position = first_item.position
 
@@ -345,6 +345,9 @@ class ScheduledGeneratorService:
         # 导入在这里避免循环依赖
         from ..db.session import get_session_maker
 
+        # 记录运行中的任务，便于 stop/pause 取消
+        cls._running_tasks[config_id] = asyncio.current_task()
+
         async_session_maker = get_session_maker()
         async with async_session_maker() as session:
             try:
@@ -422,6 +425,9 @@ class ScheduledGeneratorService:
         while True:
             # 检查是否暂停
             await session.refresh(config)
+            if not config.enabled or config.status != ScheduledGeneratorStatus.RUNNING.value:
+                logger.info(f"Config {config.id} stopped or idle, breaking queue processing")
+                break
             if config.status == ScheduledGeneratorStatus.PAUSED.value:
                 logger.info(f"Config {config.id} paused, stopping queue processing")
                 break
@@ -480,8 +486,9 @@ class ScheduledGeneratorService:
             auto_task = await AutoGeneratorService.create_task(
                 db=session,
                 project_id=queue_item.novel_id,
-                enable_enhanced_mode=(config.generation_mode == GenerationMode.ENHANCED.value),
+                user_id=config.user_id,
                 auto_upload=False,  # 先不自动上传，生成完再手动上传
+                generation_config={"generation_mode": config.generation_mode},
             )
 
             queue_item.auto_generator_task_id = auto_task.id
@@ -519,6 +526,10 @@ class ScheduledGeneratorService:
                     logger.info(f"Config {config.id} paused, stopping task {auto_task.id}")
                     await AutoGeneratorService.pause_task(session, auto_task.id)
                     break
+                if not config.enabled or config.status != ScheduledGeneratorStatus.RUNNING.value:
+                    logger.info(f"Config {config.id} stopped, stopping task {auto_task.id}")
+                    await AutoGeneratorService.pause_task(session, auto_task.id)
+                    break
 
             # 更新队列项统计
             queue_item.chapters_generated = auto_task.current_chapter
@@ -546,6 +557,9 @@ class ScheduledGeneratorService:
             log.books_processed += 1
             log.total_chapters += queue_item.chapters_generated
             log.total_duration_seconds += queue_item.duration_seconds
+            config.total_books_processed += 1
+            config.total_books_success += int(queue_item.status == QueueItemStatus.COMPLETED.value)
+            config.total_books_failed += int(queue_item.status == QueueItemStatus.FAILED.value)
 
             await session.commit()
 

@@ -20,7 +20,7 @@ from ...schemas.scheduled_generator import (
 )
 from ...core.dependencies import get_current_user
 
-router = APIRouter(prefix="/scheduled-generator", tags=["scheduled-generator"])
+router = APIRouter(prefix="/api/scheduled-generator", tags=["scheduled-generator"])
 logger = logging.getLogger(__name__)
 
 
