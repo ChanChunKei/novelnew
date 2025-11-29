@@ -18,7 +18,7 @@ from ...schemas.scheduled_generator import (
     SchedulerStatusResponse,
     LogResponse,
 )
-from ..dependencies import get_current_user
+from ...core.dependencies import get_current_user
 
 router = APIRouter(prefix="/scheduled-generator", tags=["scheduled-generator"])
 logger = logging.getLogger(__name__)
