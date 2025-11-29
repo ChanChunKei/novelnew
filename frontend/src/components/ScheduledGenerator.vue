@@ -63,7 +63,7 @@
         <div class="bg-white rounded-lg shadow p-6">
           <h2 class="text-xl font-semibold mb-4">定时配置</h2>
           <div v-if="!config || !config.id">
-            <p class="text-gray-600 mb-4">尚未创建配置</p>
+            <p class="text-gray-600 mb-4">尚未创建配置，请先完成配置并添加书籍到队列。</p>
             <button
               @click="showConfigModal = true"
               class="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700"
@@ -77,6 +77,7 @@
               <p class="text-lg font-semibold">
                 {{ String(config.trigger_hour).padStart(2, '0') }}:{{String(config.trigger_minute).padStart(2, '0') }}
               </p>
+              <p class="text-xs text-gray-500 mt-1">本地时间（根据下次运行）: {{ formatLocalNextRun(config.next_run_at) }}</p>
             </div>
             <div>
               <p class="text-sm text-gray-600">生成模式</p>
@@ -428,6 +429,12 @@ const formatDateTime = (dt: string | null) => {
     hour: '2-digit',
     minute: '2-digit'
   })
+}
+
+// 将 next_run_at 转成本地时间展示
+const formatLocalNextRun = (dt: string | null) => {
+  if (!dt) return '启动后显示'
+  return formatDateTime(dt)
 }
 
 // 格式化时长
