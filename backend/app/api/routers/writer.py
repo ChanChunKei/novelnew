@@ -60,7 +60,7 @@ async def _invoke_with_specific_route(
     chat_messages = [ChatMessage(role=msg["role"], content=msg["content"]) for msg in messages]
 
     # 调用并收集响应
-    response_chunks = []
+    response_chunks: list[str] = []
     async for chunk in client.stream_chat(
         messages=chat_messages,
         model=route["model"],
@@ -68,7 +68,13 @@ async def _invoke_with_specific_route(
         timeout=timeout,
         response_format="json_object",
     ):
-        response_chunks.append(chunk)
+        # chunk 可能是 {"content": "..."}，取 content 字段
+        if isinstance(chunk, dict):
+            content = chunk.get("content")
+        else:
+            content = str(chunk)
+        if content:
+            response_chunks.append(content)
 
     return "".join(response_chunks)
 
