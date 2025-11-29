@@ -13,9 +13,9 @@
     </div>
 
     <!-- 高级加载状态 -->
-    <div v-if="isGenerating" class="text-center py-12">
+    <div v-if="isGenerating" class="text-center py-12" role="status" aria-live="polite" aria-label="蓝图生成进度">
       <!-- 主加载动画 -->
-      <div class="relative mx-auto mb-8 w-24 h-24">
+      <div class="relative mx-auto mb-8 w-24 h-24" aria-hidden="true">
         <!-- 外圆环 -->
         <div
           class="absolute inset-0 border-4 rounded-full transition-colors duration-500"
@@ -111,10 +111,12 @@
       <button
         @click="generateBlueprint"
         :disabled="isGenerating"
-        class="bg-gradient-to-r from-indigo-500 to-purple-600 text-white font-bold py-3 px-8 rounded-full hover:from-indigo-600 hover:to-purple-700 transition-all duration-300 transform hover:scale-105 shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none"
+        :aria-busy="isGenerating"
+        aria-label="开始创建小说蓝图"
+        class="bg-gradient-to-r from-indigo-500 to-purple-600 text-white font-bold py-3 px-8 rounded-full hover:from-indigo-600 hover:to-purple-700 transition-all duration-300 transform hover:scale-105 shadow-lg hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none focus:outline-none focus:ring-4 focus:ring-indigo-300"
       >
         <span class="flex items-center justify-center">
-          <svg class="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
+          <svg class="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true">
             <path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z"></path>
           </svg>
           开始创建蓝图
