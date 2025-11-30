@@ -144,6 +144,343 @@ async def get_agent_prompt_from_db(
         return get_agent_prompt(agent_type)
 
 
+# ==================== 自动上下文补全 ====================
+
+async def _auto_enrich_context(
+    db_session: AsyncSession,
+    project_id: str,
+    chapter_number: int
+) -> Dict[str, Any]:
+    """
+    自动拉取上下文信息，减少调用方输入，提高生成一致性
+    
+    拉取内容：
+    1. 蓝图概要（风格、题材、一句话概要、世界观）
+    2. 最近5章摘要
+    3. 当前分卷快照（角色状态、人物关系、世界观）
+    4. 主要角色信息
+    
+    Args:
+        db_session: 数据库会话
+        project_id: 项目ID
+        chapter_number: 当前章节号
+        
+    Returns:
+        包含上述信息的字典
+    """
+    logger.info(f"[AutoEnrich] 开始自动拉取上下文：project={project_id}, chapter={chapter_number}")
+    
+    enriched = {
+        "blueprint": None,
+        "recent_summaries": [],
+        "volume_snapshot": None,
+        "main_characters": [],
+        "volume_number": 1,
+        "volume_title": "第一卷",
+    }
+    
+    try:
+        # 1. 获取蓝图概要
+        enriched["blueprint"] = await _get_blueprint_summary(db_session, project_id)
+        
+        # 2. 获取最近章节摘要
+        enriched["recent_summaries"] = await _get_recent_summaries(db_session, project_id, chapter_number, limit=5)
+        
+        # 3. 获取当前分卷快照
+        volume_info = await _get_current_volume_snapshot(db_session, project_id, chapter_number)
+        enriched["volume_snapshot"] = volume_info.get("snapshot")
+        enriched["volume_number"] = volume_info.get("volume_number", 1)
+        enriched["volume_title"] = volume_info.get("volume_title", "第一卷")
+        
+        # 4. 获取主要角色信息
+        enriched["main_characters"] = await _get_main_characters(db_session, project_id)
+        
+        logger.info(f"[AutoEnrich] 上下文拉取完成：蓝图={bool(enriched['blueprint'])}, "
+                   f"摘要数={len(enriched['recent_summaries'])}, "
+                   f"分卷={enriched['volume_number']}, "
+                   f"角色数={len(enriched['main_characters'])}")
+        
+    except Exception as e:
+        logger.error(f"[AutoEnrich] 自动拉取上下文失败: {e}", exc_info=True)
+    
+    return enriched
+
+
+async def _get_blueprint_summary(
+    db_session: AsyncSession,
+    project_id: str
+) -> Optional[Dict[str, Any]]:
+    """获取蓝图概要信息"""
+    from sqlalchemy import select
+    from ..models.novel import NovelBlueprint
+    
+    try:
+        stmt = select(NovelBlueprint).where(NovelBlueprint.project_id == project_id)
+        result = await db_session.execute(stmt)
+        blueprint = result.scalar_one_or_none()
+        
+        if not blueprint:
+            return None
+        
+        return {
+            "title": blueprint.title,
+            "genre": blueprint.genre,
+            "style": blueprint.style,
+            "tone": blueprint.tone,
+            "target_audience": blueprint.target_audience,
+            "one_sentence_summary": blueprint.one_sentence_summary,
+            "full_synopsis": blueprint.full_synopsis[:1000] if blueprint.full_synopsis else None,  # 限制长度
+            "world_setting": blueprint.world_setting,
+        }
+    except Exception as e:
+        logger.warning(f"[AutoEnrich] 获取蓝图失败: {e}")
+        return None
+
+
+async def _get_recent_summaries(
+    db_session: AsyncSession,
+    project_id: str,
+    current_chapter: int,
+    limit: int = 5
+) -> List[Dict[str, Any]]:
+    """获取最近几章的摘要"""
+    from sqlalchemy import select, and_
+    from ..models.novel import Chapter, ChapterOutline
+    
+    summaries = []
+    
+    try:
+        # 查询最近的章节（已完成的）
+        stmt = select(Chapter).where(
+            and_(
+                Chapter.project_id == project_id,
+                Chapter.chapter_number < current_chapter,
+                Chapter.status == "successful"
+            )
+        ).order_by(Chapter.chapter_number.desc()).limit(limit)
+        
+        result = await db_session.execute(stmt)
+        chapters = result.scalars().all()
+        
+        # 同时获取章节大纲标题
+        outline_stmt = select(ChapterOutline).where(
+            and_(
+                ChapterOutline.project_id == project_id,
+                ChapterOutline.chapter_number.in_([c.chapter_number for c in chapters])
+            )
+        )
+        outline_result = await db_session.execute(outline_stmt)
+        outlines = {o.chapter_number: o for o in outline_result.scalars().all()}
+        
+        for ch in reversed(chapters):  # 按章节顺序排列
+            outline = outlines.get(ch.chapter_number)
+            summaries.append({
+                "chapter_number": ch.chapter_number,
+                "title": outline.title if outline else f"第{ch.chapter_number}章",
+                "summary": ch.real_summary or "暂无摘要",
+                "word_count": ch.word_count,
+            })
+            
+    except Exception as e:
+        logger.warning(f"[AutoEnrich] 获取最近章节摘要失败: {e}")
+    
+    return summaries
+
+
+async def _get_current_volume_snapshot(
+    db_session: AsyncSession,
+    project_id: str,
+    chapter_number: int
+) -> Dict[str, Any]:
+    """获取当前章节所属分卷的快照信息"""
+    from sqlalchemy import select, and_
+    from ..models.novel import Volume, Chapter
+    
+    try:
+        # 先通过章节找到所属分卷
+        chapter_stmt = select(Chapter).where(
+            and_(
+                Chapter.project_id == project_id,
+                Chapter.chapter_number == chapter_number
+            )
+        )
+        chapter_result = await db_session.execute(chapter_stmt)
+        chapter = chapter_result.scalar_one_or_none()
+        
+        volume_id = chapter.volume_id if chapter else None
+        
+        # 如果章节没有分卷ID，查找最新的分卷
+        if not volume_id:
+            volume_stmt = select(Volume).where(
+                Volume.project_id == project_id
+            ).order_by(Volume.volume_number.desc()).limit(1)
+            volume_result = await db_session.execute(volume_stmt)
+            volume = volume_result.scalar_one_or_none()
+        else:
+            volume_stmt = select(Volume).where(Volume.id == volume_id)
+            volume_result = await db_session.execute(volume_stmt)
+            volume = volume_result.scalar_one_or_none()
+        
+        if not volume:
+            return {
+                "volume_number": 1,
+                "volume_title": "第一卷",
+                "snapshot": None
+            }
+        
+        return {
+            "volume_number": volume.volume_number,
+            "volume_title": volume.title,
+            "snapshot": {
+                "characters": volume.characters or {},
+                "relationships": volume.relationships or {},
+                "world_setting": volume.world_setting or {},
+            }
+        }
+        
+    except Exception as e:
+        logger.warning(f"[AutoEnrich] 获取分卷快照失败: {e}")
+        return {
+            "volume_number": 1,
+            "volume_title": "第一卷",
+            "snapshot": None
+        }
+
+
+async def _get_main_characters(
+    db_session: AsyncSession,
+    project_id: str,
+    limit: int = 10
+) -> List[Dict[str, Any]]:
+    """获取主要角色信息"""
+    from sqlalchemy import select
+    from ..models.novel import BlueprintCharacter
+    
+    characters = []
+    
+    try:
+        stmt = select(BlueprintCharacter).where(
+            BlueprintCharacter.project_id == project_id
+        ).order_by(BlueprintCharacter.position).limit(limit)
+        
+        result = await db_session.execute(stmt)
+        
+        for char in result.scalars().all():
+            characters.append({
+                "name": char.name,
+                "identity": char.identity,
+                "personality": char.personality,
+                "goals": char.goals,
+                "abilities": char.abilities,
+            })
+            
+    except Exception as e:
+        logger.warning(f"[AutoEnrich] 获取角色信息失败: {e}")
+    
+    return characters
+
+
+def _format_enriched_context(enriched: Dict[str, Any]) -> str:
+    """将丰富后的上下文格式化为文本，供 Planner/Writer 使用"""
+    parts = []
+    
+    # 1. 蓝图信息
+    blueprint = enriched.get("blueprint")
+    if blueprint:
+        parts.append("# 📖 小说蓝图信息")
+        parts.append(f"- **题材**: {blueprint.get('genre', '未设定')}")
+        parts.append(f"- **风格**: {blueprint.get('style', '未设定')}")
+        parts.append(f"- **基调**: {blueprint.get('tone', '未设定')}")
+        parts.append(f"- **目标读者**: {blueprint.get('target_audience', '未设定')}")
+        if blueprint.get("one_sentence_summary"):
+            parts.append(f"- **一句话概要**: {blueprint['one_sentence_summary']}")
+        
+        world_setting = blueprint.get("world_setting")
+        if world_setting:
+            parts.append("\n## 🌍 世界观设定")
+            if isinstance(world_setting, dict):
+                for key, value in world_setting.items():
+                    if value:
+                        parts.append(f"- **{key}**: {str(value)[:200]}")
+            else:
+                parts.append(f"{str(world_setting)[:500]}")
+        parts.append("")
+    
+    # 2. 当前分卷信息
+    volume_number = enriched.get("volume_number", 1)
+    volume_title = enriched.get("volume_title", "第一卷")
+    parts.append(f"# 📚 当前分卷：第{volume_number}卷《{volume_title}》")
+    
+    volume_snapshot = enriched.get("volume_snapshot")
+    if volume_snapshot:
+        # 角色状态快照
+        chars = volume_snapshot.get("characters", {})
+        if chars:
+            parts.append("\n## 👥 本卷角色状态")
+            if isinstance(chars, dict):
+                iterable = list(chars.items())[:5]
+            elif isinstance(chars, list):
+                iterable = []
+                for item in chars[:5]:
+                    if isinstance(item, dict):
+                        name = item.get("name") or "未知"
+                        state = {k: v for k, v in item.items() if k != "name"}
+                        state_str = ", ".join([f"{k}:{v}" for k, v in state.items() if v])[:100]
+                        iterable.append((name, state_str))
+                    else:
+                        iterable.append(("未知", str(item)[:100]))
+            else:
+                iterable = []
+
+            for name_state in iterable:
+                if isinstance(name_state, tuple):
+                    name, state = name_state
+                    parts.append(f"- **{name}**: {state}")
+                else:
+                    # fallback
+                    parts.append(f"- {str(name_state)[:100]}")
+        
+        # 人物关系快照
+        rels = volume_snapshot.get("relationships", {})
+        if rels:
+            parts.append("\n## 🔗 本卷人物关系")
+            if isinstance(rels, dict):
+                for rel_key, rel_desc in list(rels.items())[:5]:
+                    parts.append(f"- {rel_key}: {str(rel_desc)[:80]}")
+            elif isinstance(rels, list):
+                for rel in rels[:5]:
+                    parts.append(f"- {str(rel)[:100]}")
+        parts.append("")
+    
+    # 3. 主要角色设定
+    main_characters = enriched.get("main_characters", [])
+    if main_characters:
+        parts.append("# 👤 主要角色设定")
+        for char in main_characters[:5]:  # 最多显示5个
+            parts.append(f"\n## {char.get('name', '未知')}")
+            if char.get("identity"):
+                parts.append(f"- **身份**: {char['identity']}")
+            if char.get("personality"):
+                parts.append(f"- **性格**: {char['personality'][:100]}")
+            if char.get("goals"):
+                parts.append(f"- **目标**: {char['goals'][:100]}")
+        parts.append("")
+    
+    # 4. 最近章节摘要
+    recent_summaries = enriched.get("recent_summaries", [])
+    if recent_summaries:
+        parts.append("# 📜 最近章节摘要")
+        for summary in recent_summaries:
+            ch_num = summary.get("chapter_number", "?")
+            title = summary.get("title", f"第{ch_num}章")
+            text = summary.get("summary", "暂无摘要")[:200]
+            parts.append(f"\n## 第{ch_num}章 {title}")
+            parts.append(text)
+        parts.append("")
+    
+    return "\n".join(parts)
+
+
 # 以上检测函数已全部移除，回归上游简单实现
 
 
@@ -1683,8 +2020,33 @@ async def _generate_with_agent_dialogue_impl(
     provider = config.primary.provider
     model = config.primary.model
     
+    # ==================== 自动上下文补全 ====================
+    logger.info("阶段0：自动拉取上下文信息（蓝图、分卷快照、最近摘要、角色）")
+    enriched_context = await _auto_enrich_context(db_session, project_id, chapter_number)
+    enriched_context_text = _format_enriched_context(enriched_context)
+    
+    # 将丰富后的上下文追加到用户提示词
+    enhanced_user_prompt = f"""{enriched_context_text}
+
+---
+
+# 📝 原始章节上下文
+
+{user_prompt}"""
+    
+    logger.info(f"[AutoEnrich] 上下文已注入，增加 {len(enriched_context_text)} 字符")
+    
     # 对话历史（记录所有Agent的交互）
     conversation_history = []
+    
+    # 存储丰富后的上下文，供 Writer 使用
+    enriched_metadata = {
+        "volume_number": enriched_context.get("volume_number", 1),
+        "volume_title": enriched_context.get("volume_title", "第一卷"),
+        "has_blueprint": enriched_context.get("blueprint") is not None,
+        "recent_summary_count": len(enriched_context.get("recent_summaries", [])),
+        "main_character_count": len(enriched_context.get("main_characters", [])),
+    }
     
     # ==================== 阶段1：思考Agent ====================
     logger.info("阶段1：思考Agent分析大纲并查询历史信息")
@@ -1694,7 +2056,7 @@ async def _generate_with_agent_dialogue_impl(
         llm_service=llm_service,
         provider=provider,
         model=model,
-        user_prompt=inject_ending_outline_text(user_prompt, ending_outline) if ending_outline else user_prompt,
+        user_prompt=inject_ending_outline_text(enhanced_user_prompt, ending_outline) if ending_outline else enhanced_user_prompt,
         user_id=user_id,
         temperature=PLANNER_TEMPERATURE,
         timeout=timeout,
@@ -1730,7 +2092,7 @@ async def _generate_with_agent_dialogue_impl(
         # 阶段2：写作Agent生成内容
         writer_start = time.time()
         writer_context = _build_writer_context(
-            user_prompt=user_prompt,
+            user_prompt=enhanced_user_prompt,  # ✅ 使用增强后的上下文
             planner_result=planner_result,
             conversation_history=conversation_history,
             is_rewrite=(iteration > 0)
@@ -1777,7 +2139,7 @@ async def _generate_with_agent_dialogue_impl(
         reviewer_context = _build_reviewer_context(
             writer_result=writer_result,
             conversation_history=conversation_history,
-            user_prompt=user_prompt
+            user_prompt=enhanced_user_prompt  # ✅ 使用增强后的上下文
         )
 
         reviewer_result = await _call_reviewer_agent(
