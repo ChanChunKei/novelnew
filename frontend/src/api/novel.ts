@@ -180,6 +180,33 @@ export interface BlueprintGenerationResponse {
   ai_message: string
 }
 
+// 快捷蓝图自动生成（creative/reference/agent）
+export interface BlueprintAutoGenerateRequest {
+  mode: 'creative' | 'reference' | 'agent'
+  creative_input?: {
+    idea: string
+    genre?: string
+    style?: string
+    target_length?: string
+  }
+  reference_input?: {
+    reference_book: {
+      type: 'book_name' | 'upload'
+      content: string
+    }
+    custom_requirements?: string
+  }
+  project_name?: string
+}
+
+export interface BlueprintAutoGenerateResponse {
+  project_id: string
+  mode: string
+  blueprint: Blueprint
+  meta_features?: Record<string, unknown>
+  plagiarism_check?: Record<string, unknown>
+}
+
 export interface UIControl {
   type: 'single_choice' | 'text_input'
   options?: Array<{ id: string; label: string }>
@@ -262,6 +289,13 @@ export class NovelAPI {
   static async generateBlueprint(projectId: string): Promise<BlueprintGenerationResponse> {
     return request(`${NOVELS_BASE}/${projectId}/blueprint/generate`, {
       method: 'POST'
+    })
+  }
+
+  static async autoGenerateBlueprint(payload: BlueprintAutoGenerateRequest): Promise<BlueprintAutoGenerateResponse> {
+    return request('/blueprint/auto-generate', {
+      method: 'POST',
+      body: JSON.stringify(payload),
     })
   }
 

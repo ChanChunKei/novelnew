@@ -190,6 +190,75 @@ class NovelService:
         await self.session.refresh(project)
         return project
 
+    async def create_project_with_blueprint(self, user_id: int, title: str, blueprint_data: Dict) -> NovelProject:
+        """
+        创建项目并填充生成的蓝图数据
+        
+        注意：只保存蓝图信息（世界观、角色等），不生成章节大纲
+        章节大纲应该通过后续的"大纲生成"功能创建
+
+        Args:
+            user_id: 用户ID
+            title: 项目标题
+            blueprint_data: 自动生成的蓝图数据（来自BlueprintGeneratorService）
+        """
+        # 创建项目
+        project = NovelProject(
+            id=str(uuid.uuid4()),
+            user_id=user_id,
+            title=title,
+            initial_prompt=blueprint_data.get("one_sentence_summary", ""),
+        )
+        self.session.add(project)
+        await self.session.flush()  # 获取project ID
+
+        # 创建并填充蓝图
+        from ..schemas.novel import (
+            Blueprint,
+            Relationship,
+        )
+
+        world_setting = blueprint_data.get("world_setting", {})
+        characters = blueprint_data.get("characters", [])
+        
+        # 构建角色关系
+        relationships = []
+        protagonist = next((c for c in characters if c.get("role") == "主角"), None)
+        if protagonist:
+            for char in characters:
+                if char != protagonist and char.get("role") != "主角":
+                    rel_desc = char.get("relationship_to_protagonist", "")
+                    if rel_desc:
+                        relationships.append(
+                            Relationship(
+                                character_from=protagonist.get("name", ""),
+                                character_to=char.get("name", ""),
+                                description=rel_desc,
+                            )
+                        )
+
+        # 构建Blueprint（不包含章节大纲和分卷）
+        blueprint_schema = Blueprint(
+            title=title,
+            target_audience="",
+            genre=blueprint_data.get("genre", "")[:50] if blueprint_data.get("genre") else "",
+            style=blueprint_data.get("style", "")[:50] if blueprint_data.get("style") else "",
+            tone="",
+            one_sentence_summary=blueprint_data.get("one_sentence_summary", ""),
+            full_synopsis="",
+            world_setting=world_setting,
+            characters=characters,
+            relationships=relationships,
+            volumes=[],  # 不创建分卷，由后续分卷管理功能处理
+            chapter_outline=[],  # 不生成章节大纲，由后续大纲生成功能处理
+        )
+
+        # 使用replace_blueprint保存
+        await self.replace_blueprint(project.id, blueprint_schema)
+
+        await self.session.refresh(project)
+        return project
+
     async def ensure_project_owner(self, project_id: str, user_id: int) -> NovelProject:
         project = await self.repo.get_by_id(project_id)
         if not project:

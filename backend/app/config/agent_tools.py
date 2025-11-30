@@ -8,6 +8,136 @@ Agent工具配置
 from typing import List, Dict, Any
 
 
+def get_reviewer_tools() -> List[Dict[str, Any]]:
+    """
+    获取审批Agent专用的验证工具
+
+    这些工具允许Reviewer主动验证Writer的输出是否符合设定：
+    - verify_character_action: 验证角色行为是否符合设定
+    - verify_timeline: 验证时间线是否正确
+    - verify_world_rules: 验证是否违反世界观规则
+    - search_chapters: 搜索历史章节验证细节
+
+    Returns:
+        工具定义列表
+    """
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": "verify_character_action",
+                "description": "验证角色的行为是否符合其设定和历史表现。用于检查是否OOC（Out of Character）。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "character_name": {
+                            "type": "string",
+                            "description": "角色名称"
+                        },
+                        "action_description": {
+                            "type": "string",
+                            "description": "角色在本章中的行为描述，如'张三主动向敌人求饶'"
+                        },
+                        "context": {
+                            "type": "string",
+                            "description": "行为发生的上下文，如'被敌人包围时'"
+                        }
+                    },
+                    "required": ["character_name", "action_description"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "verify_timeline",
+                "description": "验证时间线是否正确，检查事件顺序和时间跨度是否合理。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "events": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "需要验证的事件列表，如['张三昨天受伤', '张三今天参加比武']"
+                        },
+                        "chapter_range": {
+                            "type": "string",
+                            "description": "检查的章节范围，如'10-15'",
+                            "default": "recent"
+                        }
+                    },
+                    "required": ["events"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "verify_world_rules",
+                "description": "验证是否违反世界观规则，如凡人不能飞、魔法需要咒语等。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "actions_to_verify": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "需要验证的动作列表，如['主角瞬间移动到敌人身后', '凡人飞上天空']"
+                        }
+                    },
+                    "required": ["actions_to_verify"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "search_chapters",
+                "description": "搜索历史章节验证细节一致性，如角色受伤状态、物品持有情况等。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "keyword": {
+                            "type": "string",
+                            "description": "搜索关键词，如角色名、物品名、地点等"
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "返回结果数量，默认3条",
+                            "default": 3
+                        }
+                    },
+                    "required": ["keyword"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "get_character_state",
+                "description": "获取角色当前状态（位置、伤势、持有物品、情绪等）。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "character_name": {
+                            "type": "string",
+                            "description": "角色名称"
+                        },
+                        "chapter_number": {
+                            "type": "integer",
+                            "description": "可选：截至该章节的最新状态"
+                        }
+                    },
+                    "required": ["character_name"]
+                }
+            }
+        }
+    ]
+
+
+# Reviewer专用工具
+REVIEWER_TOOLS = get_reviewer_tools()
+
+
 def get_novel_agent_tools() -> List[Dict[str, Any]]:
     """
     获取小说生成Agent的工具定义

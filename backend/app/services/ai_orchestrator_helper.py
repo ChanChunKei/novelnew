@@ -19,6 +19,7 @@ from ..services.llm_service import LLMService
 from ..services.config_service import ConfigService
 from ..utils.json_utils import remove_think_tags, unwrap_markdown_json, sanitize_json_like_text
 from ..core.config import settings
+from ..utils.ending_utils import inject_ending_outline_text
 import re
 
 logger = logging.getLogger(__name__)
@@ -239,6 +240,7 @@ async def generate_chapter_content(
             timeout=timeout,
             project_id=project_id,
             chapter_number=chapter_number,
+            ending_outline=None,  # 由上层按需注入收尾规划
         )
 
     # 传统模式：直接调用AI
@@ -908,7 +910,7 @@ async def _tool_get_character_state(
     arguments: Dict
 ) -> str:
     """获取角色状态"""
-    name = arguments.get("name")
+    name = arguments.get("character_name") or arguments.get("name")
     chapter_number = arguments.get("chapter_number")
 
     if not project_id:
@@ -1266,6 +1268,321 @@ async def _tool_find_foreshadowing(
         return f"查找失败: {str(e)}"
 
 
+# ==================== Reviewer专用验证工具 ====================
+
+async def _tool_verify_character_action(
+    db_session: AsyncSession,
+    project_id: Optional[str],
+    arguments: Dict
+) -> str:
+    """验证角色行为是否符合设定"""
+    character_name = arguments.get("character_name", "")
+    action_description = arguments.get("action_description", "")
+    context = arguments.get("context", "")
+
+    if not project_id:
+        return "错误：缺少project_id"
+    if not character_name:
+        return "错误：缺少角色名称"
+
+    try:
+        from sqlalchemy import select, and_
+        from ..models.novel import BlueprintCharacter, Chapter
+
+        # 1. 查询角色设定
+        stmt = select(BlueprintCharacter).where(
+            and_(
+                BlueprintCharacter.project_id == project_id,
+                BlueprintCharacter.name.contains(character_name)
+            )
+        )
+        result = await db_session.execute(stmt)
+        character = result.scalar_one_or_none()
+
+        if not character:
+            return f"未找到角色【{character_name}】的设定信息，无法验证。"
+
+        # 2. 搜索该角色在历史章节中的表现
+        stmt = select(Chapter).where(
+            and_(
+                Chapter.project_id == project_id,
+                Chapter.status == "successful"
+            )
+        ).order_by(Chapter.chapter_number.desc()).limit(10)
+        
+        result = await db_session.execute(stmt)
+        recent_chapters = result.scalars().all()
+
+        character_behaviors = []
+        for ch in recent_chapters:
+            if ch.real_summary and character_name in ch.real_summary:
+                character_behaviors.append(f"第{ch.chapter_number}章：{ch.real_summary[:200]}")
+
+        # 3. 构建验证报告
+        report = [
+            f"=== 角色【{character_name}】行为验证 ===",
+            "",
+            f"📋 角色设定：",
+            f"  - 身份：{character.identity or '未设定'}",
+            f"  - 性格：{character.personality or '未设定'}",
+            f"  - 目标：{character.goals or '未设定'}",
+            "",
+            f"🔍 待验证行为：{action_description}",
+            f"   上下文：{context or '无'}",
+            "",
+        ]
+
+        if character_behaviors:
+            report.append(f"📖 近期表现（最近10章中出现{len(character_behaviors)}次）：")
+            for behavior in character_behaviors[:5]:
+                report.append(f"  - {behavior}")
+        else:
+            report.append("📖 近期章节摘要中未提及该角色")
+
+        report.extend([
+            "",
+            "⚠️ 请根据以上信息判断该行为是否符合角色设定。",
+            "如果角色性格是'谨慎内敛'，突然'大声呵斥'可能是OOC。"
+        ])
+
+        return "\n".join(report)
+
+    except Exception as e:
+        logger.error(f"验证角色行为失败: {str(e)}")
+        return f"验证失败: {str(e)}"
+
+
+async def _tool_verify_timeline(
+    db_session: AsyncSession,
+    project_id: Optional[str],
+    arguments: Dict
+) -> str:
+    """验证时间线是否正确"""
+    events = arguments.get("events", [])
+    chapter_range = arguments.get("chapter_range", "recent")
+
+    if not project_id:
+        return "错误：缺少project_id"
+    if not events:
+        return "错误：缺少需要验证的事件列表"
+
+    try:
+        from sqlalchemy import select, and_
+        from ..models.novel import Chapter
+
+        # 确定章节范围
+        if chapter_range == "recent":
+            stmt = select(Chapter).where(
+                and_(
+                    Chapter.project_id == project_id,
+                    Chapter.status == "successful"
+                )
+            ).order_by(Chapter.chapter_number.desc()).limit(20)
+        else:
+            # 解析如 "10-20" 格式
+            try:
+                parts = chapter_range.split("-")
+                start_ch = int(parts[0])
+                end_ch = int(parts[1])
+                stmt = select(Chapter).where(
+                    and_(
+                        Chapter.project_id == project_id,
+                        Chapter.status == "successful",
+                        Chapter.chapter_number >= start_ch,
+                        Chapter.chapter_number <= end_ch
+                    )
+                ).order_by(Chapter.chapter_number)
+            except:
+                stmt = select(Chapter).where(
+                    and_(
+                        Chapter.project_id == project_id,
+                        Chapter.status == "successful"
+                    )
+                ).order_by(Chapter.chapter_number.desc()).limit(20)
+
+        result = await db_session.execute(stmt)
+        chapters = result.scalars().all()
+
+        # 搜索时间相关关键词
+        time_keywords = ["昨天", "今天", "明天", "三天前", "一周后", "当晚", "次日", 
+                        "过了", "之后", "之前", "小时", "刻钟", "片刻"]
+
+        report = [
+            "=== 时间线验证报告 ===",
+            "",
+            f"📋 待验证事件：",
+        ]
+        for event in events:
+            report.append(f"  - {event}")
+
+        report.append("")
+        report.append("📖 相关章节时间描述：")
+
+        found_timeline = []
+        for ch in chapters:
+            summary = ch.real_summary or ""
+            for kw in time_keywords:
+                if kw in summary:
+                    # 提取包含时间词的句子
+                    pos = summary.find(kw)
+                    start = max(0, pos - 30)
+                    end = min(len(summary), pos + 50)
+                    snippet = summary[start:end]
+                    found_timeline.append(f"第{ch.chapter_number}章：...{snippet}...")
+                    break
+
+        if found_timeline:
+            for item in found_timeline[:10]:
+                report.append(f"  - {item}")
+        else:
+            report.append("  未在摘要中找到明确的时间描述")
+
+        report.extend([
+            "",
+            "⚠️ 请根据以上信息检查时间线是否连贯。",
+            "常见问题：角色刚受伤就能激烈战斗、时间跳跃没有交代等。"
+        ])
+
+        return "\n".join(report)
+
+    except Exception as e:
+        logger.error(f"验证时间线失败: {str(e)}")
+        return f"验证失败: {str(e)}"
+
+
+async def _tool_verify_world_rules(
+    db_session: AsyncSession,
+    project_id: Optional[str],
+    arguments: Dict
+) -> str:
+    """验证是否违反世界观规则"""
+    actions_to_verify = arguments.get("actions_to_verify", [])
+
+    if not project_id:
+        return "错误：缺少project_id"
+    if not actions_to_verify:
+        return "错误：缺少需要验证的动作列表"
+
+    try:
+        from sqlalchemy import select
+        from ..models.novel import NovelProject
+
+        # 获取项目的世界观设定
+        stmt = select(NovelProject).where(NovelProject.id == project_id)
+        result = await db_session.execute(stmt)
+        project = result.scalar_one_or_none()
+
+        if not project:
+            return f"未找到项目 {project_id}"
+
+        # 提取世界观设定
+        blueprint = project.blueprint
+        world_setting = getattr(blueprint, "world_setting", {}) if blueprint else {}
+        if not isinstance(world_setting, dict):
+            world_setting = {}
+        power_system = world_setting.get("power_system", "")
+        rules = world_setting.get("rules", [])
+        background = world_setting.get("background", "")
+
+        report = [
+            "=== 世界观规则验证 ===",
+            "",
+            f"🌍 世界观设定：",
+            f"  - 背景：{background[:200] if background else '未设定'}",
+            f"  - 力量体系：{power_system[:200] if power_system else '未设定'}",
+        ]
+
+        if rules:
+            report.append(f"  - 规则约束：")
+            for rule in rules[:5]:
+                report.append(f"    • {rule}")
+
+        report.append("")
+        report.append(f"🔍 待验证动作：")
+        for action in actions_to_verify:
+            report.append(f"  - {action}")
+
+        report.extend([
+            "",
+            "⚠️ 请判断上述动作是否违反世界观规则。",
+            "例如：如果设定是'凡人无法飞行'，那么普通人飞天就是违规。"
+        ])
+
+        return "\n".join(report)
+
+    except Exception as e:
+        logger.error(f"验证世界观规则失败: {str(e)}")
+        return f"验证失败: {str(e)}"
+
+
+async def _execute_reviewer_tools(
+    db_session: AsyncSession,
+    project_id: Optional[str],
+    tool_calls: List[Dict],
+    log_callback: Optional[Callable[[str, str], Awaitable[None]]] = None,
+) -> List[str]:
+    """
+    执行Reviewer的验证工具调用
+    
+    支持的工具：
+    - verify_character_action: 验证角色行为
+    - verify_timeline: 验证时间线
+    - verify_world_rules: 验证世界观规则
+    - search_chapters: 搜索历史章节（复用现有实现）
+    - get_character_state: 获取角色状态（复用现有实现）
+    """
+    import asyncio
+
+    async def execute_single_tool(tool_call: Dict) -> str:
+        function_name = tool_call.get("function", {}).get("name", "")
+        arguments_raw = tool_call.get("function", {}).get("arguments", {})
+
+        # 解析参数
+        if isinstance(arguments_raw, str):
+            try:
+                arguments = json.loads(arguments_raw)
+            except json.JSONDecodeError:
+                arguments = {}
+        else:
+            arguments = arguments_raw
+
+        logger.info(f"[Reviewer] 执行工具: {function_name}，参数: {arguments}")
+
+        # 记录工具调用日志
+        if log_callback:
+            await log_callback("info", f"🔍 Reviewer验证工具: {function_name}")
+
+        try:
+            if function_name == "verify_character_action":
+                return await _tool_verify_character_action(db_session, project_id, arguments)
+            elif function_name == "verify_timeline":
+                return await _tool_verify_timeline(db_session, project_id, arguments)
+            elif function_name == "verify_world_rules":
+                return await _tool_verify_world_rules(db_session, project_id, arguments)
+            elif function_name == "search_chapters":
+                return await _tool_search_chapters(db_session, project_id, arguments)
+            elif function_name == "get_character_state":
+                return await _tool_get_character_state(db_session, project_id, arguments)
+            else:
+                return f"未知工具: {function_name}"
+        except Exception as e:
+            logger.error(f"[Reviewer] 工具 {function_name} 执行失败: {e}")
+            return f"工具执行失败: {str(e)}"
+
+    # 并行执行所有工具调用
+    tasks = [execute_single_tool(tc) for tc in tool_calls]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    # 处理异常结果
+    processed_results = []
+    for r in results:
+        if isinstance(r, Exception):
+            processed_results.append(f"工具执行异常: {str(r)}")
+        else:
+            processed_results.append(r)
+
+    return processed_results
+
 
 # ==================== 三Agent对话模式实现 ====================
 
@@ -1278,6 +1595,7 @@ async def _generate_with_agent_dialogue(
     timeout: float,
     project_id: Optional[str],
     chapter_number: Optional[int],
+    ending_outline: Optional[Dict[str, Any]] = None,
 ) -> str:
     """
     三Agent对话模式生成章节（带总体超时控制）
@@ -1318,6 +1636,7 @@ async def _generate_with_agent_dialogue(
                 timeout=timeout,
                 project_id=project_id,
                 chapter_number=chapter_number,
+                ending_outline=ending_outline,
             ),
             timeout=AGENT_DIALOGUE_TOTAL_TIMEOUT
         )
@@ -1339,6 +1658,7 @@ async def _generate_with_agent_dialogue_impl(
     timeout: float,
     project_id: Optional[str],
     chapter_number: Optional[int],
+    ending_outline: Optional[Dict[str, Any]] = None,
 ) -> str:
     """
     三Agent对话模式生成章节（实际实现）
@@ -1374,7 +1694,7 @@ async def _generate_with_agent_dialogue_impl(
         llm_service=llm_service,
         provider=provider,
         model=model,
-        user_prompt=user_prompt,
+        user_prompt=inject_ending_outline_text(user_prompt, ending_outline) if ending_outline else user_prompt,
         user_id=user_id,
         temperature=PLANNER_TEMPERATURE,
         timeout=timeout,
@@ -1468,6 +1788,8 @@ async def _generate_with_agent_dialogue_impl(
             user_id=user_id,
             temperature=REVIEWER_TEMPERATURE,
             timeout=timeout,
+            project_id=project_id,  # ✅ 传入project_id以支持验证工具
+            enable_tools=True,
         )
 
         logger.info(f"审批Agent完成，耗时: {time.time() - reviewer_start:.2f}秒")
@@ -1477,12 +1799,33 @@ async def _generate_with_agent_dialogue_impl(
         logger.info(f"📝 审批Agent输出（迭代 {iteration + 1}）：")
         logger.info(f"  评分: {reviewer_result.get('score', 'N/A')}/{MIN_APPROVAL_SCORE}")
         logger.info(f"  是否通过: {'✅ 通过' if reviewer_result.get('approved', False) else '❌ 未通过'}")
-        suggestions = reviewer_result.get('suggestions', [])
-        if suggestions:
-            logger.info(f"  修改建议 ({len(suggestions)}条):")
-            for idx, suggestion in enumerate(suggestions[:5], 1):  # 只显示前5条
-                logger.info(f"    {idx}. {suggestion[:150]}...")
-        logger.info(f"  总体评价: {reviewer_result.get('overall_comment', 'N/A')[:200]}...")
+        
+        # 显示各维度评分（如果有）
+        dimension_scores = reviewer_result.get('dimension_scores', {})
+        if dimension_scores:
+            logger.info(f"  各维度评分:")
+            for dim, score in dimension_scores.items():
+                logger.info(f"    - {dim}: {score}/20")
+        
+        # 优先显示 revision_plan（新格式），否则显示 suggestions（旧格式）
+        revision_plan = reviewer_result.get('revision_plan', [])
+        if revision_plan:
+            logger.info(f"  修改计划 ({len(revision_plan)}项):")
+            for idx, item in enumerate(revision_plan[:5], 1):
+                priority = item.get('priority', 'medium')
+                location = item.get('location', '未知')
+                issue = item.get('issue', '')[:100]
+                logger.info(f"    {idx}. [{priority}] {location}: {issue}...")
+        else:
+            suggestions = reviewer_result.get('suggestions', [])
+            if suggestions:
+                logger.info(f"  修改建议 ({len(suggestions)}条):")
+                for idx, suggestion in enumerate(suggestions[:5], 1):
+                    logger.info(f"    {idx}. {suggestion[:150]}...")
+        
+        feedback = reviewer_result.get('feedback', reviewer_result.get('overall_comment', ''))
+        if feedback:
+            logger.info(f"  总体评价: {feedback[:200]}...")
         logger.info("=" * 80)
 
         conversation_history.append({
@@ -1500,7 +1843,12 @@ async def _generate_with_agent_dialogue_impl(
             break
         else:
             logger.warning(f"❌ 审批未通过，评分：{score}/{MIN_APPROVAL_SCORE}")
-            logger.info(f"修改建议：{reviewer_result.get('suggestions', [])}")
+            revision_plan = reviewer_result.get('revision_plan', [])
+            if revision_plan:
+                high_priority = [r for r in revision_plan if r.get('priority') == 'high']
+                logger.info(f"修改计划：共{len(revision_plan)}项，其中高优先级{len(high_priority)}项")
+            else:
+                logger.info(f"修改建议：{reviewer_result.get('suggestions', [])}")
 
             # 如果是最后一次迭代，使用当前版本
             if iteration == MAX_REWRITE_ITERATIONS - 1:
@@ -1891,13 +2239,23 @@ async def _call_reviewer_agent(
     user_id: int,
     temperature: float,
     timeout: float,
+    project_id: Optional[str] = None,
+    enable_tools: bool = True,
 ) -> Dict[str, Any]:
     """
-    调用审批Agent
+    调用审批Agent（支持验证工具调用）
 
     上下文：写作内容 + 写作Agent的所有上下文
     任务：审核质量，返回通过/不通过 + 修改建议
+
+    ✅ 新增：支持工具调用进行真实验证
+    - verify_character_action: 验证角色行为是否符合设定
+    - verify_timeline: 验证时间线是否正确
+    - verify_world_rules: 验证是否违反世界观规则
+    - search_chapters: 搜索历史章节验证细节
     """
+    from ..config.agent_tools import REVIEWER_TOOLS
+
     # 从数据库读取prompt
     reviewer_prompt = await get_agent_prompt_from_db(llm_service.db_session, "reviewer", is_outline=False)
 
@@ -1906,38 +2264,87 @@ async def _call_reviewer_agent(
         {"role": "user", "content": reviewer_context}
     ]
 
-    response_str = await llm_service.invoke(
-        provider=provider,
-        model=model,
-        messages=messages,
-        temperature=temperature,
-        timeout=timeout,
-        user_id=user_id,
-        response_format="json_object",  # 强制JSON格式
-    )
+    # 最多2轮工具调用（验证不需要太多轮次）
+    MAX_REVIEWER_TOOL_ROUNDS = 2
 
-    try:
-        response = json.loads(response_str)
-        return response
-    except json.JSONDecodeError as e:
-        # ✅ 解析失败，默认不通过（保证质量）
-        logger.error(f"审批Agent返回非JSON格式: {e}, 原始响应前200字: {response_str[:200]}")
-        return {
-            "approved": False,
-            "score": 0,
-            "feedback": "审批系统错误：响应格式错误",
-            "suggestions": ["审批Agent返回了非JSON格式的响应，请检查提示词或重试"],
-            "issues": ["审批系统异常"]
-        }
-    except Exception as e:
-        logger.error(f"审批Agent处理响应时出错: {e}", exc_info=True)
-        return {
-            "approved": False,
-            "score": 0,
-            "feedback": f"审批系统错误: {str(e)}",
-            "suggestions": ["系统异常，请重试"],
-            "issues": ["审批系统异常"]
-        }
+    for round_num in range(MAX_REVIEWER_TOOL_ROUNDS):
+        # 判断是否使用工具
+        use_tools = enable_tools and project_id and round_num < MAX_REVIEWER_TOOL_ROUNDS - 1
+
+        if use_tools:
+            response_str = await llm_service.invoke(
+                provider=provider,
+                model=model,
+                messages=messages,
+                temperature=temperature,
+                timeout=timeout,
+                user_id=user_id,
+                tools=REVIEWER_TOOLS,
+            )
+        else:
+            # 最后一轮或不使用工具时，强制JSON输出
+            response_str = await llm_service.invoke(
+                provider=provider,
+                model=model,
+                messages=messages,
+                temperature=temperature,
+                timeout=timeout,
+                user_id=user_id,
+                response_format="json_object",
+            )
+
+        try:
+            response = json.loads(response_str)
+        except json.JSONDecodeError as e:
+            if round_num == MAX_REVIEWER_TOOL_ROUNDS - 1:
+                # 最后一轮解析失败，返回错误
+                logger.error(f"审批Agent返回非JSON格式: {e}, 原始响应前200字: {response_str[:200]}")
+                return {
+                    "approved": False,
+                    "score": 0,
+                    "feedback": "审批系统错误：响应格式错误",
+                    "revision_plan": [],
+                    "issues": ["审批Agent返回了非JSON格式的响应"]
+                }
+            else:
+                # 可能是纯文本工具请求，继续下一轮
+                logger.warning(f"审批Agent第{round_num + 1}轮返回非JSON: {response_str[:200]}")
+                continue
+
+        # 检查是否有工具调用
+        if "tool_calls" in response and response["tool_calls"] and use_tools:
+            logger.info(f"[Reviewer] 第{round_num + 1}轮调用了 {len(response['tool_calls'])} 个验证工具")
+
+            # 执行验证工具
+            tool_results = await _execute_reviewer_tools(
+                db_session=llm_service.db_session,
+                project_id=project_id,
+                tool_calls=response["tool_calls"],
+            )
+
+            # 添加到对话历史
+            messages.append({
+                "role": "assistant",
+                "content": response.get("content", ""),
+                "tool_calls": response["tool_calls"]
+            })
+
+            # 添加工具结果
+            for tool_call, result in zip(response["tool_calls"], tool_results):
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call.get("id", f"call_{round_num}"),
+                    "content": result
+                })
+
+            logger.info(f"[Reviewer] 工具验证结果已添加，继续下一轮")
+        else:
+            # 没有工具调用，直接返回审批结果
+            logger.info(f"[Reviewer] 第{round_num + 1}轮完成审批，返回结果")
+            return response
+
+    # 所有轮次完成后，返回最后的响应
+    return response
 
 
 async def _call_summarizer_agent(
@@ -2033,14 +2440,68 @@ def _build_writer_context(
                 break
         
         if last_review:
-            context_parts.extend([
-                "# ⚠️ 审批Agent的修改意见",
-                "上一版本存在以下问题，请根据建议修改：",
-                json.dumps(last_review, ensure_ascii=False, indent=2),
-                "",
-                "请重新撰写，确保解决上述问题。",
-                ""
-            ])
+            context_parts.append("# ⚠️ 审批Agent的修改意见（请务必逐条修正）")
+            context_parts.append("")
+            
+            # 显示评分和总体反馈
+            score = last_review.get("score", 0)
+            feedback = last_review.get("feedback", "")
+            context_parts.append(f"**上一版本评分：{score}/100**")
+            if feedback:
+                context_parts.append(f"**总体评价：** {feedback}")
+            context_parts.append("")
+            
+            # 优先使用结构化的 revision_plan（新格式）
+            revision_plan = last_review.get("revision_plan", [])
+            if revision_plan:
+                # 按优先级排序：high > medium > low
+                priority_order = {"high": 0, "medium": 1, "low": 2}
+                sorted_plan = sorted(
+                    revision_plan, 
+                    key=lambda x: priority_order.get(x.get("priority", "medium"), 1)
+                )
+                
+                context_parts.append("## 📋 修改清单（按优先级排序）")
+                context_parts.append("")
+                
+                for idx, item in enumerate(sorted_plan, 1):
+                    priority = item.get("priority", "medium")
+                    priority_emoji = {"high": "🔴", "medium": "🟡", "low": "🟢"}.get(priority, "⚪")
+                    location = item.get("location", "未指定位置")
+                    issue = item.get("issue", "未说明问题")
+                    current = item.get("current", "")
+                    instruction = item.get("instruction", "")
+                    
+                    context_parts.append(f"### {priority_emoji} 修改项 {idx}：{location}")
+                    context_parts.append(f"- **问题：** {issue}")
+                    if current:
+                        context_parts.append(f"- **原文：** \"{current}\"")
+                    if instruction:
+                        context_parts.append(f"- **修改指令：** {instruction}")
+                    context_parts.append("")
+                
+                context_parts.append("---")
+                context_parts.append("**⚠️ 请在重写时逐条落实上述修改，特别是🔴高优先级项。**")
+                context_parts.append("")
+            else:
+                # 兼容旧格式：使用 issues + suggestions
+                issues = last_review.get("issues", [])
+                suggestions = last_review.get("suggestions", [])
+                
+                if issues:
+                    context_parts.append("## 存在的问题：")
+                    for issue in issues:
+                        context_parts.append(f"- {issue}")
+                    context_parts.append("")
+                
+                if suggestions:
+                    context_parts.append("## 修改建议：")
+                    for suggestion in suggestions:
+                        context_parts.append(f"- {suggestion}")
+                    context_parts.append("")
+                
+                context_parts.append("**请根据上述意见修改后重新提交。**")
+                context_parts.append("")
 
     # ✅ 修复：明确指令，强调输出的是章节正文而不是分析
     context_parts.extend([
@@ -2393,6 +2854,19 @@ async def _generate_outline_with_agents_impl(
             logger.info(f"    第{ch.get('chapter_number')}章 - {ch.get('title')}: {ch.get('summary', '')[:100]}...")
         logger.info("=" * 80)
 
+        # 基础校验：章节数与规划是否一致，摘要/标题是否为空
+        planned_chapters = (planner_result.get("chapter_plan", {}) or {}).get("chapters_to_generate")
+        if planned_chapters and len(writer_result.get("chapters", [])) != planned_chapters:
+            logger.warning(
+                f"⚠️ Writer生成章节数({len(writer_result.get('chapters', []))})与Planner规划({planned_chapters})不一致"
+            )
+
+        for ch in writer_result.get("chapters", []):
+            if not ch.get("title"):
+                ch["title"] = f"第{ch.get('chapter_number', '?')}章"
+            if ch.get("summary") is None:
+                ch["summary"] = ""
+
         conversation_history.append({
             "agent": "outline_writer",
             "iteration": iteration + 1,
@@ -2408,7 +2882,8 @@ async def _generate_outline_with_agents_impl(
         reviewer_context = _build_outline_reviewer_context(
             writer_result=writer_result,
             conversation_history=conversation_history,
-            initial_context=context
+            initial_context=context,
+            planner_result=planner_result
         )
 
         reviewer_result = await _call_outline_reviewer_agent(
@@ -2419,6 +2894,8 @@ async def _generate_outline_with_agents_impl(
             user_id=user_id,
             timeout=120.0,
             temperature=reviewer_temp,
+            project_id=project_id,
+            enable_tools=True,
         )
 
         logger.info(f"审批Agent完成，耗时: {time.time() - reviewer_start:.2f}秒")
@@ -2775,12 +3252,15 @@ async def _call_outline_reviewer_agent(
     user_id: int,
     timeout: float,
     temperature: float,
+    project_id: Optional[str] = None,
+    enable_tools: bool = True,
 ) -> Dict[str, Any]:
     """
     调用大纲审核Agent
 
     任务：审核大纲质量，提供评分和修改建议
     """
+    from ..config.agent_tools import REVIEWER_TOOLS
     # 从数据库读取prompt
     reviewer_prompt = await get_agent_prompt_from_db(llm_service.db_session, "reviewer", is_outline=True)
 
@@ -2789,37 +3269,75 @@ async def _call_outline_reviewer_agent(
         {"role": "user", "content": context}
     ]
 
-    response_str = await llm_service.invoke(
-        provider=provider,
-        model=model,
-        messages=messages,
-        temperature=temperature,
-        timeout=timeout,
-        user_id=user_id,
-        response_format="json_object",
-    )
+    # 最多2轮：第一轮可调用工具，第二轮强制JSON
+    MAX_REVIEWER_TOOL_ROUNDS = 2
+    response: Dict[str, Any] = {}
 
-    try:
-        response = json.loads(response_str)
-        # ✅ 确保默认行为安全：解析失败时不通过
-        if "approved" not in response:
-            response["approved"] = False
-        if "score" not in response:
-            response["score"] = 0
-        return response
-    except json.JSONDecodeError as e:
-        logger.error(
-            f"审批Agent返回非JSON格式，响应前200字: {response_str[:200]}",
-            exc_info=True
+    for round_idx in range(MAX_REVIEWER_TOOL_ROUNDS):
+        use_tools = enable_tools and project_id and round_idx == 0
+
+        response_str = await llm_service.invoke(
+            provider=provider,
+            model=model,
+            messages=messages,
+            temperature=temperature,
+            timeout=timeout,
+            user_id=user_id,
+            tools=REVIEWER_TOOLS if use_tools else None,
+            response_format=None if use_tools else "json_object",
         )
-        # 返回不通过的默认结果
-        return {
-            "approved": False,
-            "score": 0,
-            "issues": ["返回格式错误，无法解析"],
-            "suggestions": ["请重新生成"],
-            "feedback": "审批失败：返回格式错误"
-        }
+
+        try:
+            response = json.loads(response_str)
+        except json.JSONDecodeError:
+            # 仅在工具轮允许非JSON返回，继续下一轮
+            if use_tools:
+                logger.warning(f"[Outline Reviewer] 第{round_idx + 1}轮返回非JSON，尝试继续：{response_str[:200]}")
+                continue
+            logger.error(
+                f"审批Agent返回非JSON格式，响应前200字: {response_str[:200]}",
+                exc_info=True
+            )
+            return {
+                "approved": False,
+                "score": 0,
+                "issues": ["返回格式错误，无法解析"],
+                "suggestions": ["请重新生成"],
+                "feedback": "审批失败：返回格式错误"
+            }
+
+        # 若有工具调用，执行并将结果回写，再进入下一轮
+        if use_tools and response.get("tool_calls"):
+            logger.info(f"[Outline Reviewer] 调用了 {len(response['tool_calls'])} 个工具")
+            tool_results = await _execute_reviewer_tools(
+                db_session=llm_service.db_session,
+                project_id=project_id,
+                tool_calls=response["tool_calls"],
+            )
+
+            messages.append({
+                "role": "assistant",
+                "content": response.get("content", ""),
+                "tool_calls": response["tool_calls"]
+            })
+
+            for tool_call, result in zip(response["tool_calls"], tool_results):
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call.get("id", f"outline_reviewer_tool_{round_idx}"),
+                    "content": result
+                })
+            continue
+
+        # 正常返回JSON时退出循环
+        break
+
+    # ✅ 确保默认行为安全：解析失败或字段缺失时不通过
+    if "approved" not in response:
+        response["approved"] = False
+    if "score" not in response:
+        response["score"] = 0
+    return response
 
 
 # ==================== 大纲生成上下文构建函数 ====================
@@ -2966,17 +3484,28 @@ def _build_outline_writer_context(
 def _build_outline_reviewer_context(
     writer_result: Dict[str, Any],
     conversation_history: List[Dict[str, Any]],
-    initial_context: str
+    initial_context: str,
+    planner_result: Optional[Dict[str, Any]] = None
 ) -> str:
     """构建大纲审核Agent的上下文"""
+    planned_count = None
+    if planner_result:
+        planned_count = (planner_result.get("chapter_plan", {}) or {}).get("chapters_to_generate")
+
     context_parts = [
         "# 项目背景",
         initial_context,
         "",
         "# 待审核的大纲",
         f"章节数量：{len(writer_result.get('chapters', []))}",
-        "",
     ]
+
+    if planned_count:
+        context_parts.append(f"规划章节数（Planner）：{planned_count}")
+        if planned_count != len(writer_result.get('chapters', [])):
+            context_parts.append("⚠️ 实际章节数与规划不一致，请优先检查章节覆盖度和节奏。")
+
+    context_parts.append("")
 
     for chapter in writer_result.get("chapters", []):
         context_parts.append(

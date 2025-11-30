@@ -6,6 +6,8 @@ import WritingDesk from '../views/WritingDesk.vue'
 import NovelDetail from '../views/NovelDetail.vue'
 import Login from '../views/Login.vue'
 import Register from '../views/Register.vue'
+import DiscussionModeView from '../views/DiscussionModeView.vue'
+import BlueprintAutoView from '../views/BlueprintAutoView.vue'
 import { useAuthStore } from '@/stores/auth'
 
 const router = createRouter({
@@ -88,6 +90,18 @@ const router = createRouter({
       path: '/scheduled-generator',
       name: 'scheduled-generator',
       component: () => import('../components/ScheduledGenerator.vue'),
+      meta: { requiresAuth: true },
+    },
+    {
+      path: '/discussion-mode',
+      name: 'discussion-mode',
+      component: DiscussionModeView,
+      meta: { requiresAuth: true },
+    },
+    {
+      path: '/blueprint-auto',
+      name: 'blueprint-auto',
+      component: BlueprintAutoView,
       meta: { requiresAuth: true },
     },
   ],

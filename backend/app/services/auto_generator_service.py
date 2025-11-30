@@ -1543,6 +1543,7 @@ class AutoGeneratorService:
             )
 
             from ..services.ai_orchestrator_helper import generate_outline_with_agents
+            from ..services.ending_service import EndingService
 
             try:
                 # ✅ 读取3Agent自定义配置
@@ -1559,11 +1560,30 @@ class AutoGeneratorService:
                 writer_model = agent_config.get("agent_writer_model")
                 reviewer_provider = agent_config.get("agent_reviewer_provider")
                 reviewer_model = agent_config.get("agent_reviewer_model")
+                enable_ending_service = bool(agent_config.get("enable_ending_service"))
 
                 # ✅ 新增：创建日志回调函数，将工具执行日志持久化到数据库
                 async def log_callback(log_type: str, message: str):
                     """日志回调函数，用于记录RAG工具执行日志到数据库"""
                     await cls._log(db, task.id, log_type, message)
+
+                ending_outline = None
+                if enable_ending_service:
+                    try:
+                        ending_service = EndingService(db)
+                        checklist = await ending_service.generate_ending_checklist(
+                            project_id=task.project_id,
+                            user_id=user_id,
+                        )
+                        ending_outline = await ending_service.plan_ending_outline(
+                            project_id=task.project_id,
+                            user_id=user_id,
+                            checklist=checklist,
+                        )
+                        await cls._log(db, task.id, "info", "✅ 已生成收尾大纲，将注入3Agent上下文")
+                    except Exception as e:
+                        await cls._log(db, task.id, "warning", f"⚠️ 收尾服务生成失败：{e}")
+                        ending_outline = None
 
                 result = await generate_outline_with_agents(
                     db_session=db,
@@ -1586,6 +1606,7 @@ class AutoGeneratorService:
                     reviewer_provider=reviewer_provider,
                     reviewer_model=reviewer_model,
                     log_callback=log_callback,  # ✅ 传递 log_callback
+                    ending_outline=ending_outline,
                 )
 
                 # 从result中提取章节数据和元数据
