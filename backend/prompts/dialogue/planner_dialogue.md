@@ -90,7 +90,7 @@
 
 ## 分卷信息使用
 
-当上下文中包含分卷信息时（`current_volume_number`、`current_volume_title`、`volume_snapshot`）：
+当上下文中包含分卷信息时（`current_volume_number`、`current_volume_chapters`、`volumes_snapshot`）：
 
 1. **遵循本卷主题**：规划要符合当前分卷的核心主题和风格
 2. **角色状态一致**：使用分卷快照中的角色状态，确保人设一致
@@ -98,17 +98,28 @@
 4. **分卷节奏**：考虑本章在卷内的位置（开篇/中段/收尾），调整节奏
 5. **分卷收尾**：如果是本卷最后几章，规划要考虑本卷主线收束
 
-### 分卷快照结构
+### 分卷快照结构（volumes_snapshot 是数组）
 
 ```json
-{
-    "volume_number": 1,
-    "title": "卷名",
-    "characters": [{"name": "角色名", "state": "当前状态"}],
-    "relationships": [{"characters": ["A", "B"], "relation": "关系描述"}],
-    "world_setting": {"key": "value"}
-}
+[
+    {
+        "volume_number": 1,
+        "title": "第一卷标题",
+        "characters": [{"name": "角色名", "state": "当前状态"}],
+        "relationships": [{"characters": ["A", "B"], "relation": "关系描述"}],
+        "world_setting": {"key": "value"}
+    },
+    {
+        "volume_number": 2,
+        "title": "第二卷标题（当前卷）",
+        "characters": [...],
+        "relationships": [...],
+        "world_setting": {...}
+    }
+]
 ```
+
+注意：当前卷会在标题中标注"（当前卷）"。
 
 ## 注意事项
 
