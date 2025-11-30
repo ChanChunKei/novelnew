@@ -121,7 +121,12 @@ const loading = ref(false)
 const error = ref<string | null>(null)
 const result = ref<DiscussionChapterResponse | null>(null)
 
-const form = ref<DiscussionChapterRequest>({
+// 定义带有必填 config 的表单类型
+interface FormData extends Omit<DiscussionChapterRequest, 'config'> {
+  config: NonNullable<DiscussionChapterRequest['config']>
+}
+
+const form = ref<FormData>({
   project_id: 1,
   chapter_number: 1,
   genre: '',

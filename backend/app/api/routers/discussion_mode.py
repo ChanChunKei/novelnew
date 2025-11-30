@@ -32,6 +32,10 @@ from ...services.fanqie_publisher_service import FanqiePublisherService
 from ...services.novel_service import NovelService
 from ...models.novel import Volume, ChapterVersion
 from sqlalchemy import select, func
+from ...core.config import settings
+from ...repositories.system_config_repository import SystemConfigRepository
+from ...services.vector_store_service import VectorStoreService
+from ...models.novel import Chapter
 
 logger = logging.getLogger(__name__)
 
@@ -43,13 +47,89 @@ def get_llm_service(session: AsyncSession) -> LLMService:
     return LLMService(session)
 
 
-def get_rag_service(session: AsyncSession):
-    """获取 RAG 服务（可选）"""
-    try:
-        return GeminiRAGService(session)
-    except Exception as e:
-        logger.warning(f"初始化 RAG 服务失败，已禁用: {e}")
-        return None
+class DiscussionRAG:
+    """讨论模式 RAG 适配器：复用系统 rag.provider 配置"""
+
+    def __init__(self, session: AsyncSession, llm_service: LLMService):
+        self.session = session
+        self.llm_service = llm_service
+
+    async def _get_provider(self) -> str:
+        provider = settings.rag_provider or ""
+        try:
+            repo = SystemConfigRepository(self.session)
+            record = await repo.get_by_key("rag.provider")
+            if record and record.value:
+                provider = record.value
+        except Exception as e:
+            logger.warning(f"[DiscussionRAG] 读取rag.provider失败，使用默认: {e}")
+        return (provider or "").strip().lower()
+
+    async def search(self, project_id: str, query: str, top_k: int = 5):
+        provider = await self._get_provider()
+
+        # 向量库优先
+        if provider in ["libsql", "siliconflow"] and settings.vector_store_enabled:
+            try:
+                vector_service = VectorStoreService()
+                embedding = await self.llm_service.get_embedding(query)
+                chunks = await vector_service.query_chunks(
+                    project_id=project_id,
+                    embedding=embedding,
+                    top_k=top_k
+                )
+                if chunks:
+                    return [
+                        {
+                            "chapter_number": c.chapter_number,
+                            "chapter_title": c.chapter_title or "",
+                            "content_snippet": (c.content or "")[:500],
+                        }
+                        for c in chunks
+                    ]
+            except Exception as e:
+                logger.warning(f"[DiscussionRAG] 向量检索失败，降级: {e}")
+
+        # Gemini 次选
+        if provider == "gemini":
+            try:
+                gemini = GeminiRAGService(self.session)
+                return await gemini.search(project_id=project_id, query=query, top_k=top_k)
+            except Exception as e:
+                logger.warning(f"[DiscussionRAG] Gemini 检索失败，降级: {e}")
+
+        # DB 关键词回退
+        try:
+            stmt = (
+                select(Chapter)
+                .where(Chapter.project_id == str(project_id))
+                .order_by(Chapter.chapter_number.desc())
+                .limit(top_k * 3)
+            )
+            res = await self.session.execute(stmt)
+            chapters = res.scalars().all()
+            results = []
+            for ch in chapters:
+                if ch.selected_version and query in (ch.selected_version.content or ""):
+                    content = ch.selected_version.content
+                    pos = content.find(query)
+                    snippet = content[max(0, pos - 100): pos + 200]
+                    results.append({
+                        "chapter_number": ch.chapter_number,
+                        "chapter_title": f"第{ch.chapter_number}章",
+                        "content_snippet": snippet,
+                    })
+                    if len(results) >= top_k:
+                        break
+            return results
+        except Exception as e:
+            logger.error(f"[DiscussionRAG] 数据库检索失败: {e}")
+            return []
+
+
+def get_rag_service(session: AsyncSession, llm_service: LLMService):
+    """获取 RAG 适配器（共用 rag.provider 配置）"""
+    return DiscussionRAG(session, llm_service)
 
 
 def _convert_config(config: Optional[DiscussionModeConfig]) -> Optional[DialogueConfig]:
@@ -115,7 +195,7 @@ async def generate_chapter(
     try:
         # 初始化服务
         llm_service = get_llm_service(session)
-        rag_service = get_rag_service(session)
+        rag_service = get_rag_service(session, llm_service)
         
         # 转换配置
         config = _convert_config(request.config)
@@ -234,7 +314,7 @@ async def generate_outline(
     
     try:
         llm_service = get_llm_service(session)
-        rag_service = get_rag_service(session)
+        rag_service = get_rag_service(session, llm_service)
         
         config = _convert_config(request.config)
         
