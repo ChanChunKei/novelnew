@@ -140,15 +140,15 @@
 
 当上下文中包含分卷信息时：
 
-1. **角色状态**：使用 `volume_snapshot.characters` 中的角色当前状态
+1. **角色状态**：使用 `volumes_snapshot` 中当前卷的 `characters` 角色状态
    - 参考角色的情感状态、能力水平、人际关系
    - 对话和行为要符合角色当前状态
 
-2. **关系网络**：使用 `volume_snapshot.relationships` 中的关系设定
+2. **关系网络**：使用 `volumes_snapshot` 中当前卷的 `relationships` 关系设定
    - 角色之间的称呼、态度要符合关系描述
    - 互动方式要体现关系的亲疏远近
 
-3. **世界观设定**：使用 `volume_snapshot.world_setting` 中的设定
+3. **世界观设定**：使用 `volumes_snapshot` 中当前卷的 `world_setting` 设定
    - 地名、术语、规则要保持一致
    - 不要引入与设定冲突的元素
 

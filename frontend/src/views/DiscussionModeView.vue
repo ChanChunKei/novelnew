@@ -135,6 +135,12 @@ const form = ref<DiscussionChapterRequest>({
   auto_upload: false,
   fanqie_account: '',
   config: {
+    max_iterations: 5,
+    approval_threshold: 80,
+    discussion_threshold: 60,
+    timeout_seconds: 300,
+    enable_tools: true,
+    verbose: false,
     enable_volume_decision: true,
     min_chapters_per_volume: 15,
     max_chapters_per_volume: 30,
