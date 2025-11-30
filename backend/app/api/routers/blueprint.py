@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.dependencies import get_current_user
 from ...db.session import get_session
-from ...models.user import UserInDB
+from ...schemas.user import UserInDB
 from ...services.blueprint_generator_service import BlueprintGeneratorService
 from ...services.novel_service import NovelService
 from ...schemas.novel import NovelProjectSchema
