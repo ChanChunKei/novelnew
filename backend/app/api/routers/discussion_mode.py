@@ -10,9 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import logging
 import asyncio
 
-from ...db.database import get_session
-from ...db.session import AsyncSessionLocal
-from ..dependencies import get_current_user
+from ...db.session import get_session, AsyncSessionLocal
+from ...core.dependencies import get_current_user
 from ...models.user import UserInDB
 from ...models.novel import Chapter, ChapterVersion, Volume
 from ...schemas.discussion_mode import (

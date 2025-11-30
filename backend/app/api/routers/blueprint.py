@@ -7,7 +7,8 @@ from pydantic import BaseModel, Field
 from typing import Optional, Dict
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..dependencies import get_session, get_current_user
+from ...core.dependencies import get_current_user
+from ...db.session import get_session
 from ...models.user import UserInDB
 from ...services.blueprint_generator_service import BlueprintGeneratorService
 from ...services.novel_service import NovelService
